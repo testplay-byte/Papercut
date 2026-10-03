@@ -42,7 +42,7 @@ device — never in your scan folder, never in the cloud.
 
 ## 🚀 Getting started
 
-1. **Install** — grab **papercut-release.apk** from this repo's [Releases page](https://github.com/testplay-byte/Papercut/releases)
+1. **Install** — grab **app-release.apk** from this repo's [Releases page](https://github.com/testplay-byte/Papercut/releases)
    (rolling `latest` build, refreshed automatically on every push; nothing is
    ever built on a developer machine).
 2. **First launch** — pick a storage folder (Papercut creates `Papercut/Default`

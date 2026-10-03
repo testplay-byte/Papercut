@@ -111,16 +111,13 @@ jobs:
           body: |
             Rolling build of Papercut — updated automatically on every push to `main`.
 
-            **papercut-release.apk** — signed release build (install this one)
-            **papercut-debug.apk** — debug build with extra logging
+            **app-release.apk** — signed release build (install this one)
+            **app-debug.apk** — debug build with extra logging
 
             Signed with the project release key; verified via `apksigner` in CI.
           files: |
             app/build/outputs/apk/release/app-release.apk
             debug-apk/app-debug.apk
-          file_names: |
-            papercut-release.apk
-            papercut-debug.apk
           prerelease: false
           make_latest: true
         env:
