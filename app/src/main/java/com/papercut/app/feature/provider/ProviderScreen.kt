@@ -250,7 +250,7 @@ private fun KeyTile(entry: KeyEntry, masked: String, cooldownLeftMs: Long, onRem
 private fun NewProviderScreen(onBack: () -> Unit) {
     val settings: SettingsViewModel = appViewModel { c -> SettingsViewModel(c) }
     var name by remember { mutableStateOf("") }
-    var baseUrl by remember { mutableStateOf("https://") }
+    var baseUrl by remember { mutableStateOf("") }
     var models by remember { mutableStateOf("") }
 
     Column(
@@ -262,7 +262,7 @@ private fun NewProviderScreen(onBack: () -> Unit) {
     ) {
         StatCaption("Add a custom provider (any OpenAI-compatible server)")
         OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name — e.g. My VPS") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it }, label = { Text("Base URL — e.g. http://192.168.1.20:11434/v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it }, label = { Text("Base URL") }, placeholder = { Text("http://192.168.1.20:11434/v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = models, onValueChange = { models = it }, label = { Text("Models, comma separated") }, modifier = Modifier.fillMaxWidth())
         Text(
             "Papercut calls <base URL>/chat/completions with vision content parts — works with OpenRouter, Together, DeepSeek, Ollama, LM Studio and similar.",

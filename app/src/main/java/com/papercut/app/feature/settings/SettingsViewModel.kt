@@ -79,13 +79,18 @@ class ProviderViewModel(
     val providerId: String,
 ) : ViewModel() {
 
+    // Seed with the CURRENT value: a fresh StateFlow starts null/empty for one
+    // frame, and the screen's "provider == null -> close" check bounced the user
+    // straight back out — model/key selection never worked (field report 2026-10-04).
     val provider: StateFlow<AiProvider?> = container.settings.settings
         .map { s -> s.providers.find { p -> p.id == providerId } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000),
+            container.settings.settings.value.providers.find { it.id == providerId })
 
     val keys: StateFlow<List<KeyEntry>> = container.settings.settings
         .map { s -> s.keys.filter { k -> k.providerId == providerId } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000),
+            container.settings.settings.value.keys.filter { it.providerId == providerId })
 
     fun masked(keyId: String) = container.settings.maskedSecret(keyId)
 

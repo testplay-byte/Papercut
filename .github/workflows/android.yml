@@ -11,6 +11,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write # rolling release on main
+
 jobs:
   build:
     name: Debug APK
@@ -52,6 +55,7 @@ jobs:
 
   release:
     name: Signed Release APK
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -85,3 +89,26 @@ jobs:
           name: papercut-release-apk-signed
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
+
+      # Rolling "latest" release: every push to main updates the same release
+      # with fresh APKs, so downloads live at one stable place.
+      # (Prerelease stays false — /releases/latest only serves non-prereleases.)
+      - name: Publish rolling release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Papercut (latest build)
+          body: |
+            Rolling nightly-style build of Papercut — updated automatically on every push to `main`.
+
+            **papercut-release.apk** — signed release build (install this one)
+            **papercut-debug.apk** — debug build with extra logging
+
+            Signed with the project release key; verified via `apksigner` in CI.
+          files: |
+            app/build/outputs/apk/release/app-release.apk
+            app/build/outputs/apk/debug/app-debug.apk
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

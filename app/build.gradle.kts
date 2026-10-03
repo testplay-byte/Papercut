@@ -94,6 +94,7 @@ dependencies {
 
     // Storage / files
     implementation(libs.androidx.documentfile)
+    implementation(libs.androidx.exifinterface)
     implementation(libs.androidx.security.crypto)
     implementation(libs.coil.compose)
 

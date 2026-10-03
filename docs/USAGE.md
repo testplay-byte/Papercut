@@ -4,8 +4,8 @@ Every step of the Papercut pipeline, from installing to printing a digitized pag
 
 ## 0 · Install
 
-1. GitHub → this repo → **Actions** → latest green run → **Artifacts** →
-   `papercut-debug-apk` → download, unzip, install the APK
+1. GitHub → this repo → **Releases** → latest → download
+   **papercut-release.apk** and install it
    (allow "install unknown apps" for your browser/file manager).
 2. Open Papercut.
 

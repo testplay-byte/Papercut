@@ -137,7 +137,7 @@ fun SettingsScreen(
                     Icon(Icons.Filled.Tune, null, tint = PaperColors.Accent, modifier = Modifier.size(26.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Scan prompts", style = MaterialTheme.typography.titleMedium, color = PaperColors.Ink)
-                        StatCaption("Text digital-twin & Notes prompts — view, edit, reset")
+                        StatCaption("Text & Notes")
                     }
                 }
             }
@@ -152,7 +152,7 @@ fun SettingsScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Auto-digitize after scan", style = MaterialTheme.typography.titleMedium, color = PaperColors.Ink)
-                        StatCaption("Send every capture to the AI queue immediately")
+                        StatCaption("Digitize right after capture")
                     }
                     SmoothSwitch(checked = settings.autoEnhance, onCheckedChange = { vm.setAutoEnhance(it) })
                 }
@@ -162,7 +162,7 @@ fun SettingsScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Default mode", style = MaterialTheme.typography.titleMedium, color = PaperColors.Ink)
-                        StatCaption("Mode preselected in the scanner")
+                        StatCaption("In the scanner")
                     }
                     com.papercut.app.core.design.SegmentedPill(
                         options = listOf(ScanMode.TEXT to "Text", ScanMode.NOTES to "Notes"),
@@ -197,7 +197,7 @@ fun SettingsScreen(
 
         item {
             Text(
-                "Your API keys are stored in encrypted, keystore-backed storage on this device only. Scans stay in your folder as plain files.",
+                "Keys are stored encrypted on this device. Scans stay as plain files.",
                 fontSize = 12.sp,
                 color = PaperColors.InkSecondary,
                 modifier = Modifier.padding(top = PaperGap.s),

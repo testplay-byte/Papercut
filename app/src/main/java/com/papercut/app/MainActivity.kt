@@ -17,7 +17,10 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge() // transparent system bars; screens own their safe areas
+        // dark app: light system-bar icons always (auto() would follow the
+        // system light/dark setting and can render dark-on-dark)
+        androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+            .let { enableEdgeToEdge(statusBarStyle = it, navigationBarStyle = it) }
         val container = (application as PapercutApp).container
         setContent {
             PapercutTheme {

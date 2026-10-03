@@ -1,10 +1,14 @@
 package com.papercut.app.feature.library
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,14 +16,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -34,36 +37,33 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.papercut.app.core.data.SettingsRepository
 import com.papercut.app.core.data.model.LibraryFolder
 import com.papercut.app.core.design.BentoTile
+import com.papercut.app.core.design.BrandHeader
 import com.papercut.app.core.design.PaperColors
 import com.papercut.app.core.design.PaperGap
 import com.papercut.app.core.design.PaperRadii
-import com.papercut.app.core.design.ScreenHeader
 import com.papercut.app.core.design.StatCaption
 import com.papercut.app.core.design.StatNumber
 import com.papercut.app.core.design.pressScale
 import com.papercut.app.core.design.tap
 import com.papercut.app.di.appViewModel
-import androidx.compose.foundation.interaction.MutableInteractionSource
 
 /**
- * Library home: header + two bento stat tiles + folder tile grid.
- * Fixes vs old app: stats derive from data (no fake numbers), all IO off-main
- * inside the repository, and folder management via one clean dialog flow
- * (old: dead search bar, fixed-width cards overflowing on narrow screens).
+ * Library home — dark, minimal bento:
+ * brand header, one compact stats strip, folder cover tiles.
+ * Long-press a folder to rename/delete (Default is protected in the repository).
  */
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LibraryScreen(
     onOpenFolder: (String) -> Unit,
-    onScanHere: () -> Unit,
 ) {
     val vm: LibraryViewModel = appViewModel { c -> LibraryViewModel(c) }
     val folders by vm.folders.collectAsState()
@@ -80,47 +80,53 @@ fun LibraryScreen(
             .background(PaperColors.Canvas),
     ) {
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 168.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                start = PaperGap.l, end = PaperGap.l, top = PaperGap.l, bottom = 110.dp,
+            columns = GridCells.Adaptive(minSize = 158.dp),
+            contentPadding = PaddingValues(
+                start = PaperGap.l, end = PaperGap.l, top = PaperGap.m, bottom = 96.dp,
             ),
-            horizontalArrangement = Arrangement.spacedBy(PaperGap.m),
-            verticalArrangement = Arrangement.spacedBy(PaperGap.m),
+            horizontalArrangement = Arrangement.spacedBy(PaperGap.s),
+            verticalArrangement = Arrangement.spacedBy(PaperGap.s),
             modifier = Modifier.fillMaxSize(),
         ) {
-            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
-                ScreenHeader("Library", "Every scan, kept as plain files you own")
-            }
-            item {
-                BentoTile {
-                    StatNumber(total.toString(), color = PaperColors.Accent)
-                    StatCaption("Total scans")
-                }
-            }
-            item {
-                BentoTile {
-                    StatNumber("$digitized", color = PaperColors.Success)
-                    StatCaption("Digitized")
-                }
-            }
-            item {
-                // "new folder" tile lives here, visible and honest
-                val inter = remember { MutableInteractionSource() }
-                Column(
-                    modifier = Modifier
-                        .aspectRatio(1.15f)
-                        .fillMaxWidth()
-                        .pressScale(inter)
-                        .clip(RoundedCornerShape(PaperRadii.tile))
-                        .background(PaperColors.TileSunken)
-                        .tap(inter) { showCreate = true },
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally,
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Filled.Add, "New folder", tint = PaperColors.InkSecondary, modifier = Modifier.size(30.dp))
-                    Text("New folder", color = PaperColors.InkSecondary, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
+                    BrandHeader("Papercut", modifier = Modifier.weight(1f))
+                    val newInter = remember { MutableInteractionSource() }
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .pressScale(newInter)
+                            .clip(RoundedCornerShape(PaperRadii.small))
+                            .background(PaperColors.Tile)
+                            .tap(newInter) { showCreate = true },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        androidx.compose.material3.Icon(
+                            Icons.Filled.Add, "New folder",
+                            tint = PaperColors.Accent,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
                 }
             }
+
+            // compact stats strip: one tile, two tabular numbers
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Row(horizontalArrangement = Arrangement.spacedBy(PaperGap.s)) {
+                    BentoTile(modifier = Modifier.weight(1f)) {
+                        StatNumber("$total")
+                        StatCaption("scans")
+                    }
+                    BentoTile(modifier = Modifier.weight(1f)) {
+                        StatNumber("$digitized", color = PaperColors.Accent)
+                        StatCaption("digitized")
+                    }
+                }
+            }
+
             items(folders, key = { it.name }) { folder ->
                 FolderTile(
                     folder = folder,
@@ -130,19 +136,55 @@ fun LibraryScreen(
             }
         }
 
-        // floating scan button (library-level quick scan into Default)
-        val scanInter = remember { MutableInteractionSource() }
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = PaperGap.l, bottom = 88.dp)
-                .size(56.dp)
-                .pressScale(scanInter)
-                .background(PaperColors.Accent, RoundedCornerShape(PaperRadii.pill))
-                .tap(scanInter, onScanHere),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(Icons.Filled.Add, "Scan", tint = Color.White, modifier = Modifier.size(26.dp))
+        if (folders.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = 96.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    androidx.compose.foundation.Image(
+                        painter = androidx.compose.ui.res.painterResource(com.papercut.app.R.drawable.ic_papercut_mark),
+                        contentDescription = null,
+                        modifier = Modifier.size(56.dp),
+                    )
+                    Text(
+                        "No folders yet",
+                        color = PaperColors.InkSecondary,
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(top = PaperGap.m),
+                    )
+                    val cta = remember { MutableInteractionSource() }
+                    Text(
+                        "Create one",
+                        color = PaperColors.Accent,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .pressScale(cta)
+                            .tap(cta) { showCreate = true }
+                            .padding(8.dp),
+                    )
+                }
+            }
+        }
+
+        // transient message
+        message?.let {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .padding(bottom = 100.dp)
+                        .background(PaperColors.Tile, RoundedCornerShape(PaperRadii.small))
+                        .border(1.dp, PaperColors.TileBorder, RoundedCornerShape(PaperRadii.small))
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                ) { Text(it, color = PaperColors.Ink, fontSize = 13.sp) }
+            }
         }
     }
 
@@ -152,9 +194,7 @@ fun LibraryScreen(
             initial = "",
             confirmLabel = "Create",
             onDismiss = { showCreate = false },
-            onConfirm = { name ->
-                vm.createFolder(name) { showCreate = false }
-            },
+            onConfirm = { name -> vm.createFolder(name) { showCreate = false } },
         )
     }
 
@@ -162,7 +202,7 @@ fun LibraryScreen(
         var renameMode by remember(folder.name) { mutableStateOf(false) }
         when {
             renameMode -> NameDialog(
-                title = "Rename folder",
+                title = "Rename",
                 initial = folder.name,
                 confirmLabel = "Rename",
                 onDismiss = { renameMode = false; manageTarget = null },
@@ -173,19 +213,15 @@ fun LibraryScreen(
             else -> AlertDialog(
                 onDismissRequest = { manageTarget = null },
                 title = { Text(folder.name) },
-                text = {
-                    Text("${folder.scanCount} scans · ${folder.digitizedCount} digitized")
-                },
+                text = { Text("${folder.scanCount} scans") },
                 confirmButton = {
                     TextButton(onClick = { renameMode = true }) { Text("Rename") }
                 },
                 dismissButton = {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (folder.name != com.papercut.app.core.data.SettingsRepository.DEFAULT_FOLDER) {
+                        if (folder.name != SettingsRepository.DEFAULT_FOLDER) {
                             TextButton(
-                                onClick = {
-                                    vm.deleteFolder(folder.name) { manageTarget = null }
-                                },
+                                onClick = { vm.deleteFolder(folder.name) { manageTarget = null } },
                             ) { Text("Delete", color = PaperColors.Error) }
                         }
                         TextButton(onClick = { manageTarget = null }) { Text("Close") }
@@ -195,40 +231,32 @@ fun LibraryScreen(
         }
     }
 
-    // transient error/success note
     LaunchedEffect(message) {
         if (message != null) {
             kotlinx.coroutines.delay(2500)
             vm.consumeMessage()
         }
     }
-    message?.let {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.BottomCenter,
-        ) {
-            Box(
-                modifier = Modifier
-                    .padding(bottom = 120.dp)
-                    .background(PaperColors.Ink, RoundedCornerShape(PaperRadii.small))
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-            ) { Text(it, color = PaperColors.Canvas, fontSize = 13.sp) }
-        }
-    }
 }
 
-/** One folder = one bento tile: cover image, big count, digitized fraction. */
+/** Folder tile: cover photo on top, name + count below. Clean, no chrome. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FolderTile(folder: LibraryFolder, onOpen: () -> Unit, onManage: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     Column(
         modifier = Modifier
-            .aspectRatio(1.15f)
+            .aspectRatio(0.92f)
             .fillMaxWidth()
             .pressScale(interaction)
             .clip(RoundedCornerShape(PaperRadii.tile))
             .background(PaperColors.Tile)
-            .combinedTap(interaction, onOpen, onManage),
+            .combinedClickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onOpen,
+                onLongClick = onManage,
+            ),
     ) {
         Box(
             modifier = Modifier
@@ -245,22 +273,12 @@ private fun FolderTile(folder: LibraryFolder, onOpen: () -> Unit, onManage: () -
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
-                Icon(
-                    Icons.Filled.Folder,
-                    contentDescription = null,
-                    tint = if (folder.name == com.papercut.app.core.data.SettingsRepository.DEFAULT_FOLDER)
+                Text(
+                    folder.name.take(1).uppercase(),
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (folder.name == SettingsRepository.DEFAULT_FOLDER)
                         PaperColors.Accent else PaperColors.InkFaint,
-                    modifier = Modifier.size(34.dp),
-                )
-            }
-            if (folder.name == com.papercut.app.core.data.SettingsRepository.DEFAULT_FOLDER) {
-                StatCaption(
-                    "Default",
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(8.dp)
-                        .background(PaperColors.Tile, RoundedCornerShape(PaperRadii.pill))
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
                 )
             }
         }
@@ -268,42 +286,27 @@ private fun FolderTile(folder: LibraryFolder, onOpen: () -> Unit, onManage: () -
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    folder.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = PaperColors.Ink,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                )
-                Text(
-                    "${folder.digitizedCount}/${folder.scanCount} done",
-                    fontSize = 12.sp,
-                    color = PaperColors.InkSecondary,
-                )
-            }
-            StatNumber(folder.scanCount.toString(), color = PaperColors.Accent)
+            Text(
+                folder.name,
+                style = MaterialTheme.typography.titleMedium,
+                color = PaperColors.Ink,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "${folder.scanCount}",
+                color = PaperColors.InkSecondary,
+                fontWeight = FontWeight.Bold,
+                fontFeatureSettings = "tnum",
+                fontSize = 14.sp,
+            )
         }
     }
 }
 
-/** tap = open, long-press = manage. */
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-private fun Modifier.combinedTap(
-    interactionSource: MutableInteractionSource,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-): Modifier = combinedClickable(
-    interactionSource = interactionSource,
-    indication = null,
-    onClick = onClick,
-    onLongClick = onLongClick,
-)
-
-/** Single reusable name dialog (the old app's best pattern — kept, cleaned). */
+/** Reusable name dialog. */
 @Composable
 fun NameDialog(
     title: String,
@@ -321,7 +324,7 @@ fun NameDialog(
                 value = text,
                 onValueChange = { text = it },
                 singleLine = true,
-                placeholder = { Text("Folder name") },
+                placeholder = { Text("Name") },
                 modifier = Modifier.fillMaxWidth(),
             )
         },

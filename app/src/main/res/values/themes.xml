@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Theme only styles the launch window; Compose owns everything after that.
-     Background matches the bento canvas color (PaperColors.Canvas) so the app
-     opens without a color flash. -->
+<!-- Launch window styled to the dark bento canvas so the app opens without a
+     color flash. Compose owns everything after that. -->
 <resources>
     <style name="Theme.Papercut" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#EDEDF0</item>
+        <item name="android:windowBackground">#0E0E11</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>

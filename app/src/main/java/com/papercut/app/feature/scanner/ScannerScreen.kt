@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -110,8 +109,7 @@ fun ScannerScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(PaperColors.NightCanvas)
-            .systemBarsPadding(),
+            .background(PaperColors.NightCanvas),
     ) {
         if (!cameraPermission.status.isGranted) {
             PermissionNudge(onAllow = { cameraPermission.launchPermissionRequest() })
@@ -128,12 +126,19 @@ fun ScannerScreen(
         // ---- smooth orientation ----
         val tracker = remember { OrientationTracker() }
         var smoothedDeg by remember { mutableFloatStateOf(0f) }
-        DisposableEffect(Unit) {
+        // declared BEFORE the orientation listener: the listener writes
+        // imageCapture.targetRotation from sensor callbacks
+        var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
+        DisposableEffect(imageCapture) {
             val listener = object : OrientationEventListener(context) {
                 override fun onOrientationChanged(deg: Int) {
                     if (deg == ORIENTATION_UNKNOWN) return
                     tracker.onRawAngle(deg.toFloat())
                     smoothedDeg = tracker.smoothedDeg
+                    // plain property write, cheap — targetRotation is invisible to
+                    // Compose (plain var), so the old LaunchedEffect never re-fired
+                    // and captures stayed locked to portrait EXIF.
+                    imageCapture?.targetRotation = tracker.targetRotation
                 }
             }
             if (listener.canDetectOrientation()) listener.enable()
@@ -141,7 +146,6 @@ fun ScannerScreen(
         }
 
         // ---- camera: bound ONCE for the screen's lifetime ----
-        var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
         val previewView = remember {
             PreviewView(context).apply {
                 implementationMode = PreviewView.ImplementationMode.COMPATIBLE
@@ -181,10 +185,7 @@ fun ScannerScreen(
             }
         }
 
-        // live target rotation — the tracker's HYSTERESIS-STABLE quadrant
-        LaunchedEffect(tracker.targetRotation) {
-            imageCapture?.targetRotation = tracker.targetRotation
-        }
+        // (target rotation now lives in the orientation listener above)
 
         AndroidView(
             factory = { previewView },
@@ -399,7 +400,11 @@ private fun takePicture(
                 val opts = BitmapFactory.Options().apply {
                     inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, 2200)
                 }
-                val bmp = BitmapFactory.decodeFile(tmp.path, opts)
+                var bmp = BitmapFactory.decodeFile(tmp.path, opts)
+                // CameraX encodes targetRotation as EXIF orientation; BitmapFactory
+                // ignores EXIF and saveCapture re-encodes without it — without this
+                // bake-step the saved JPG lands sideways (field report 2026-10-04).
+                bmp = bmp?.applyExifRotation(tmp)
                 tmp.delete()
                 if (bmp == null) vm.captureFailed("Could not read the captured photo")
                 else vm.onImageCaptured(bmp)
@@ -418,6 +423,25 @@ private fun sampleSizeFor(w: Int, h: Int, maxSide: Int): Int {
     var sample = 1
     while (maxOf(w, h) / (sample * 2) >= maxSide) sample *= 2
     return sample
+}
+
+/** Bake EXIF orientation into real pixels and mirror-free upright result. */
+private fun android.graphics.Bitmap.applyExifRotation(file: java.io.File): android.graphics.Bitmap {
+    val exif = androidx.exifinterface.media.ExifInterface(file.path)
+    val rotation = when (exif.getAttributeInt(
+        androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,
+        androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL,
+    )) {
+        androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+        androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+        androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+        else -> 0f
+    }
+    if (rotation == 0f) return this
+    val matrix = android.graphics.Matrix().apply { postRotate(rotation) }
+    val rotated = android.graphics.Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
+    recycle()
+    return rotated
 }
 
 /** Rule-of-thirds grid + corner brackets. Pure Canvas — no image assets. */

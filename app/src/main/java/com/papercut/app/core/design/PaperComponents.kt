@@ -4,6 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -65,7 +66,8 @@ fun Modifier.tap(
     onClick = onClick,
 )
 
-/** The core bento tile: rounded raised surface with soft shadow. */
+/** The core bento tile: rounded surface with a hairline border (dark theme:
+ *  shadows read poorly, borders give the raised-tile feel). */
 @Composable
 fun BentoTile(
     modifier: Modifier = Modifier,
@@ -78,8 +80,12 @@ fun BentoTile(
     Column(
         modifier = modifier
             .pressScale(interaction)
-            .shadow(elevation = if (selected) 3.dp else 1.5.dp, shape = shape)
             .background(if (selected) PaperColors.AccentSoft else PaperColors.Tile, shape)
+            .border(
+                width = 1.dp,
+                color = if (selected) PaperColors.Accent.copy(alpha = 0.5f) else PaperColors.TileBorder,
+                shape = shape,
+            )
             .then(
                 if (onClick != null) {
                     Modifier.clickable(
@@ -240,6 +246,27 @@ fun StatusBadge(status: ScanStatus, modifier: Modifier = Modifier) {
         fontSize = 11.sp,
         fontWeight = FontWeight.SemiBold,
     )
+}
+
+/** App wordmark: Papercut mark + name. Used at the top of main screens. */
+@Composable
+fun BrandHeader(title: String, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        androidx.compose.foundation.Image(
+            painter = androidx.compose.ui.res.painterResource(com.papercut.app.R.drawable.ic_papercut_mark),
+            contentDescription = null,
+            modifier = Modifier.size(34.dp),
+        )
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineMedium,
+            color = PaperColors.Ink,
+        )
+    }
 }
 
 /** Page header: large title + optional caption, consistent across screens. */

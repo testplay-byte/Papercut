@@ -89,9 +89,6 @@ fun PapercutNavHost(
             composable(Route.Library.path) {
                 LibraryScreen(
                     onOpenFolder = { name -> navController.navigate(Route.Folder(name).path) },
-                    onScanHere = {
-                        navController.navigate(Route.Scanner(SettingsRepository.DEFAULT_FOLDER).path)
-                    },
                 )
             }
             composable(

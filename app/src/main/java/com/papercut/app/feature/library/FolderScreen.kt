@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -44,13 +43,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.papercut.app.core.data.model.ScanItem
-import com.papercut.app.core.design.BentoTile
 import com.papercut.app.core.design.PaperColors
 import com.papercut.app.core.design.PaperGap
 import com.papercut.app.core.design.PaperRadii
 import com.papercut.app.core.design.ScanStatus
 import com.papercut.app.core.design.StatCaption
-import com.papercut.app.core.design.StatNumber
 import com.papercut.app.core.design.StatusBadge
 import com.papercut.app.core.design.pressScale
 import com.papercut.app.core.design.tap
@@ -100,13 +97,11 @@ fun FolderScreen(
             }
             Column(modifier = Modifier.weight(1f).padding(start = PaperGap.m)) {
                 Text(folderName, style = MaterialTheme.typography.titleLarge, color = PaperColors.Ink, fontWeight = FontWeight.Bold)
-                StatCaption("$folderName · ${scans.size} scans")
-            }
-            // bento mini-stats
-            val done = scans.count { it.htmlUri != null }
-            BentoTile(modifier = Modifier.width(86.dp)) {
-                StatNumber("$done", color = PaperColors.Success)
-                StatCaption("done")
+                Text(
+                    "${scans.count { it.htmlUri != null }}/${scans.size} digitized",
+                    fontSize = 12.sp,
+                    color = PaperColors.InkSecondary,
+                )
             }
         }
 
