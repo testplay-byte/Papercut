@@ -42,8 +42,9 @@ device — never in your scan folder, never in the cloud.
 
 ## 🚀 Getting started
 
-1. **Install** — grab the latest debug APK from this repo's GitHub Actions runs
-   (releases are published here; nothing is built on the developer's machine).
+1. **Install** — grab the latest **signed release APK** (`papercut-release-apk-signed`)
+   or a debug build from this repo's GitHub Actions runs — nothing is ever built
+   on a developer machine.
 2. **First launch** — pick a storage folder (Papercut creates `Papercut/Default`
    inside it), then open **Settings → AI providers** and add an API key for a
    preset (or add a custom provider).
