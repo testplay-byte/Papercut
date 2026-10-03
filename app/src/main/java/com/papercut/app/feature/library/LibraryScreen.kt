@@ -298,9 +298,11 @@ private fun FolderTile(folder: LibraryFolder, onOpen: () -> Unit, onManage: () -
             Text(
                 "${folder.scanCount}",
                 color = PaperColors.InkSecondary,
-                fontWeight = FontWeight.Bold,
-                fontFeatureSettings = "tnum",
-                fontSize = 14.sp,
+                style = androidx.compose.ui.text.TextStyle(
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFeatureSettings = "tnum",
+                ),
             )
         }
     }
