@@ -9,6 +9,21 @@ android {
     namespace = "com.papercut.app"
     compileSdk = 35
 
+    // Release signing: CI provides these as env vars from repo secrets
+    // (RELEASE_KEYSTORE_BASE64 / _PASSWORD / KEY_ALIAS / KEY_PASSWORD, plus
+    // RELEASE_KEYSTORE_FILE pointing at the decoded keystore). Without them
+    // (a local checkout), release builds UNSIGNED — the keystore never lives
+    // in the repo. See docs/CONTRIBUTING.md.
+    val ksPath = System.getenv("RELEASE_KEYSTORE_FILE")
+    if (ksPath != null) {
+        signingConfigs.create("release") {
+            storeFile = file(ksPath)
+            storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+            keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+        }
+    }
+
     defaultConfig {
         applicationId = "com.papercut.app"
         minSdk = 26
@@ -24,8 +39,8 @@ android {
             versionNameSuffix = "-debug"
         }
         release {
-            // Signing is intentionally not configured here yet: releases are cut
-            // only after a signing key is added as a repo secret (see CONTRIBUTING.md).
+            // signing is wired above when CI provides the env vars
+            if (ksPath != null) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

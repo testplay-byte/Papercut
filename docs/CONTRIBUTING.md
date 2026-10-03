@@ -44,9 +44,14 @@ UI-heavy classes stay untested rather than brittle.
 
 ## Release & signing
 
-Release builds are cut from `main` by CI once a signing key is configured as the
-`RELEASE_KEYSTORE_*` repo secrets — the release `buildTypes` block is wired for
-that day but **unsigned by default** so debug CI can't fail on missing secrets.
+The `release` CI job builds a **signed** release APK: the keystore lives only as
+the `RELEASE_KEYSTORE_BASE64` repo secret (decoded into the runner's temp dir,
+never checked out), and `app/build.gradle.kts` wires it in only when the CI env
+vars are present. Local `assembleRelease` without them builds unsigned — by design.
+The workflow also runs `apksigner verify` so a bad signature fails the build.
+⚠️ The keystore is the release identity of the app: it exists ONLY on the owner's
+machine (`KSCAN/signing/`) and in repo secrets. Back it up — losing it means
+users must reinstall, and leaking it means anyone can ship fake updates.
 
 ## Dev environment
 
