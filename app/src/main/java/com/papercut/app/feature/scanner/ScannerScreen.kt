@@ -136,7 +136,7 @@ fun ScannerScreen(
                     smoothedDeg = tracker.smoothedDeg
                 }
             }
-            if (listener.canDetectOrientation()) listener.enable(OrientationEventListener.SENSOR_RATE_NORMAL)
+            if (listener.canDetectOrientation()) listener.enable()
             onDispose { listener.disable() }
         }
 
