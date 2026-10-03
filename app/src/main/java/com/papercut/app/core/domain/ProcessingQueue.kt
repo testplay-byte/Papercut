@@ -59,12 +59,24 @@ class ProcessingQueue(
     data class TaskState(val status: ScanStatus, val message: String? = null)
 
     private val queue = Channel<Task>(MAX_QUEUED)
-    private val runningJobs = mutableMapOf<String, Job>()
+    private val runningJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
+    private val cancelledKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val scope = CoroutineScope(Dispatchers.Default + Job())
 
     init {
         scope.launch {
-            for (task in queue) process(task)
+            for (task in queue) {
+                val key = statusKey(task)
+                if (key in cancelledKeys) { // cancelled while still queued
+                    cancelledKeys.remove(key)
+                    continue
+                }
+                // real child Job: cancel() can stop the work mid-flight
+                val job = scope.launch { process(task) }
+                runningJobs[key] = job
+                job.join()
+                runningJobs.remove(key)
+            }
         }
     }
 
@@ -81,11 +93,16 @@ class ProcessingQueue(
         scope.launch { queue.trySend(task) }
     }
 
-    /** Cancel a queued/running task by scan id. */
+    /** Cancel a queued or running task by scan id. */
     fun cancel(item: ScanItem) {
         val key = "${item.folder}/${item.name}"
-        runningJobs[key]?.cancel()
-        runningJobs.remove(key)
+        val active = runningJobs.remove(key)
+        if (active != null) {
+            active.cancel()          // interrupts the running task
+            cancelledKeys.remove(key) // it will not be drained as "queued-cancelled"
+        } else {
+            cancelledKeys.add(key)   // worker skips it when the queue drains
+        }
         _statuses.value = _statuses.value - key
     }
 
@@ -102,9 +119,6 @@ class ProcessingQueue(
 
     private suspend fun process(task: Task) {
         val key = statusKey(task)
-        val job = Job()
-        runningJobs[key] = job
-
         try {
             val s = settings.settings.value
             val provider = s.providers.find { it.id == s.activeProviderId && it.enabled }
@@ -164,8 +178,8 @@ class ProcessingQueue(
 
             setStatus(key, ScanStatus.Error, lastError?.message ?: "Processing failed")
         } finally {
-            runningJobs.remove(key)
-            job.cancel()
+            // a cancel() that raced task completion must not leave a stale flag
+            cancelledKeys.remove(key)
         }
     }
 

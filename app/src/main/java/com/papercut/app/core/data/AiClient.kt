@@ -138,11 +138,10 @@ class AiClient(private val secrets: SecretStore) {
 
     /** message.content is either a string or an array of {type,text} parts — read both. */
     private fun extractContent(root: JsonElement): String? {
-        val choice = root as? JsonObject
-            ?.get("choices")?.jsonArrayOrNull()
-            ?.firstOrNull() as? JsonObject
-            ?: return null
-        val content = choice["message"]?.jsonObjectOrNull()?.get("content") ?: return null
+        val obj = root as? JsonObject ?: return null
+        val choices = obj["choices"] as? JsonArray ?: return null
+        val choice = choices.firstOrNull() as? JsonObject ?: return null
+        val content = (choice["message"] as? JsonObject)?.get("content") ?: return null
         return when (content) {
             is JsonPrimitive -> content.contentOrNull
             is JsonArray -> content.joinToString("\n") { part ->
@@ -151,9 +150,6 @@ class AiClient(private val secrets: SecretStore) {
             else -> null
         }
     }
-
-    private fun JsonElement.jsonArrayOrNull(): JsonArray? = this as? JsonArray
-    private fun JsonElement.jsonObjectOrNull(): JsonObject? = this as? JsonObject
 
     /** Downscale so the longest side is <= maxSidePx, then JPEG-85 + Base64. */
     private fun encodeJpeg(bitmap: Bitmap, maxSidePx: Int): String {
