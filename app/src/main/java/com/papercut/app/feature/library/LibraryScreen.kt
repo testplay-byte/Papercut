@@ -1,6 +1,7 @@
 package com.papercut.app.feature.library
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -203,12 +204,16 @@ fun LibraryScreen(
     }
     message?.let {
         Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 120.dp)
-                .background(PaperColors.Ink, RoundedCornerShape(PaperRadii.small))
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-        ) { Text(it, color = PaperColors.Canvas, fontSize = 13.sp) }
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Box(
+                modifier = Modifier
+                    .padding(bottom = 120.dp)
+                    .background(PaperColors.Ink, RoundedCornerShape(PaperRadii.small))
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            ) { Text(it, color = PaperColors.Canvas, fontSize = 13.sp) }
+        }
     }
 }
 

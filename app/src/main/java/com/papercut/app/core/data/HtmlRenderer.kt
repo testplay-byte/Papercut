@@ -72,7 +72,7 @@ class HtmlRenderer(private val context: Context) {
             val loaded = withTimeoutOrNull(RENDER_TIMEOUT_MS) {
                 loadAndWait(webView, html)
             }
-            if (!loaded) return null
+            if (loaded != true) return null
 
             webView.measure(
                 View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),

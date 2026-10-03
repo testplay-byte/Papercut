@@ -11,7 +11,7 @@ import com.papercut.app.core.data.model.ScanMode
  */
 object PromptTemplates {
 
-    const val TEXT = """
+    val TEXT = """
 You are a Professional Digital Typesetter and Frontend Developer specializing in high-fidelity academic "Digital Twins."
 Objective: Recreate the attached book page using HTML, CSS, and MathJax. The output must be a pixel-perfect layout that respects complex wrapping and data accuracy.
 
@@ -43,7 +43,7 @@ Last check: make sure not to miss any bars, graphs, charts and such things — r
 Return ONLY the complete HTML document (doctype to closing tag), no commentary.
 """.trimIndent()
 
-    const val NOTES = """
+    val NOTES = """
 You are a meticulous study-notes engineer. Convert the attached page into a clean, structured HTML digital note.
 
 Rules:

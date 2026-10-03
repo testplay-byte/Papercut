@@ -147,12 +147,12 @@ class ProcessingQueue(
 
             for (attempt in 1..MAX_ATTEMPTS_PER_TASK) {
                 val keyEntry = pickKey(provider.id)
-                    ?: run {
-                        lastError = if (settings.settings.value.keys.any { it.providerId == provider.id })
-                            AiException.AllKeysCooling(COOLDOWN_RATE_LIMIT_MS / 1000)
-                        else AiException.NoUsableKeys()
-                        break
-                    }
+                if (keyEntry == null) {
+                    lastError = if (settings.settings.value.keys.any { it.providerId == provider.id })
+                        AiException.AllKeysCooling(COOLDOWN_RATE_LIMIT_MS / 1000)
+                    else AiException.NoUsableKeys()
+                    break
+                }
                 val outcome = try {
                     val html = ai.digitize(provider, model, keyEntry, bitmap, prompt)
                     if (scans.saveHtml(task.item, html)) {

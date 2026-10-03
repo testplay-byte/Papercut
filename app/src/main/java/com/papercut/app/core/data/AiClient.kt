@@ -51,6 +51,7 @@ class AiClient(private val secrets: SecretStore) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     private val http = HttpClient(OkHttp) {
+        expectSuccess = true // non-2xx throws ResponseException -> mapped below
         install(ContentNegotiation) { json(json) }
         install(HttpTimeout) {
             requestTimeoutMillis = 180_000 // long generations, but bounded
@@ -121,11 +122,12 @@ class AiClient(private val secrets: SecretStore) {
                 setBody(bodyString)
                 headers.append("Authorization", "Bearer $secret")
             }.body<JsonElement>()
-        } catch (e: io.ktor.client.statement.HttpResponseException) {
-            throw when (e.status.value) {
+        } catch (e: io.ktor.client.plugins.ResponseException) {
+            // expectSuccess=true makes 4xx/5xx land here with a readable status
+            throw when (e.response.status.value) {
                 401, 403 -> AiException.Auth()
                 429 -> AiException.RateLimited()
-                else -> AiException.Server(e.status.value)
+                else -> AiException.Server(e.response.status.value)
             }
         } catch (e: Exception) {
             throw AiException.Network()

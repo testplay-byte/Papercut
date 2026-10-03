@@ -105,10 +105,12 @@ fun StatNumber(
         text = value,
         modifier = modifier,
         color = color,
-        fontSize = 34.sp,
-        fontWeight = FontWeight.Bold,
-        fontFeatureSettings = "tnum", // tabular figures: digits never jitter
-        letterSpacing = (-1).sp,
+        style = androidx.compose.ui.text.TextStyle(
+            fontSize = 34.sp,
+            fontWeight = FontWeight.Bold,
+            fontFeatureSettings = "tnum", // tabular figures: digits never jitter
+            letterSpacing = (-1).sp,
+        ),
     )
 }
 
@@ -139,7 +141,7 @@ fun <T> SegmentedPill(
 
     Row(
         modifier = modifier
-            .background(RoundedCornerShape(PaperRadii.pill), color = trackColor)
+            .background(color = trackColor, shape = RoundedCornerShape(PaperRadii.pill))
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
@@ -195,7 +197,7 @@ fun SmoothSwitch(
         modifier = modifier
             .size(48.dp, 28.dp)
             .pressScale(interaction, pressedScale = 0.94f)
-            .background(RoundedCornerShape(PaperRadii.pill), color = track)
+            .background(color = track, shape = RoundedCornerShape(PaperRadii.pill))
             .clickable(
                 interactionSource = interaction,
                 indication = null,
@@ -232,7 +234,7 @@ fun StatusBadge(status: ScanStatus, modifier: Modifier = Modifier) {
     Text(
         text = label,
         modifier = modifier
-            .background(RoundedCornerShape(PaperRadii.pill), color.copy(alpha = 0.14f))
+            .background(color.copy(alpha = 0.14f), RoundedCornerShape(PaperRadii.pill))
             .padding(horizontal = 10.dp, vertical = 4.dp),
         color = color,
         fontSize = 11.sp,
