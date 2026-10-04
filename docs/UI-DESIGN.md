@@ -1,4 +1,4 @@
-# 🎨 UI Design — the Papercut Bento System
+# 🎨 UI Design — the Papercut Bento System (dark)
 
 This app has a real design language now. The old prototype mixed hand-copied
 widgets, raw hex colors in every screen, an inert Material theme, and focus
@@ -8,40 +8,47 @@ widgets outside design" review rules.
 
 ## Principles
 
-1. **Bento grid.** Content lives in rounded tiles (24dp) floating on an iOS-gray
-   canvas. Big things big, small things in mini-cards. Nothing edge-to-edge dense.
-2. **One accent.** Vivid orange-red (`#FF4F26`) marks *action and value*: active
-   states, key numbers, the scan FAB. Ink does the talking everywhere else.
-3. **Tabular numbers.** Every count/metric uses bold 34sp with `tnum` —
-   digits never jitter when values change. (`StatNumber`)
+1. **Dark bento.** Owner-chosen identity: near-black canvas, raised charcoal
+   tiles with hairline borders (shadows read poorly on dark), big rounded
+   corners. Content lives in tiles — Library grid, capture rail, settings
+   sections. Simple, clean, professional density: minimal chrome, short copy.
+2. **One accent.** Vivid orange-red (`#FF5A2E`) marks *action and value*:
+   active states, key numbers, the scan FAB, the cut corner of the logo.
+   Ink does the talking everywhere else.
+3. **Tabular numbers.** Counts/metrics use `tnum` font features (via
+   `TextStyle`) — digits never jitter when values change.
 4. **Scale, not ripple.** Pressing anything shrinks it ~3%. No focus borders,
    no ripples, no highlights — the "weird border on tap" is designed out at the
    `Modifier.tap` / `pressScale` level so it cannot come back.
-5. **Two modes.** Light bento (Library, Settings) ↔ Night focus (Scanner,
-   Viewer) — same geometry, inverted palette tokens (`Night*` colors).
+5. **One dark family everywhere.** v2 unified: scanner, editor and document hub
+   share the same near-black surfaces as the rest of the app — the product now
+   *looks* like one professional scanning tool top to bottom.
 
 ## Tokens (`PaperTokens.kt`)
 
 | Token | Value | Used for |
 |---|---|---|
-| `Canvas` | `#EDEDF0` | page background |
-| `Tile` / `TilePressed` / `TileSunken` | `#FAFAFC` / `#E9E9ED` / `#E2E2E7` | surfaces & insets |
-| `Ink` / `InkSecondary` / `InkFaint` | `#1C1C1E` / `#6E6E73` / `#AEAEB2` | text ramp |
-| `Accent` / `AccentSoft` | `#FF4F26` / `#FFE3DB` | action & selection |
+| `Canvas` | `#0E0E11` | page background |
+| `Tile` / `TilePressed` / `TileSunken` | `#1A1A1F` / `#232329` / `#141418` | surfaces & insets |
+| `TileBorder` | `#2A2A31` | hairline tile separation |
+| `Ink` / `InkSecondary` / `InkFaint` | `#F2F2F5` / `#9D9DA6` / `#8B8B97` | text ramp (≥4.5:1) |
+| `Accent` / `AccentSoft` | `#FF5A2E` / 20% wash | action & selection |
 | `Success/Warning/Error` | green/amber/red | status only |
-| `NightCanvas/Tile/Ink…` | dark set | scanner/viewer |
-| `PaperRadii` | tile 24 / small 14 / pill 999 | corners |
+| `PaperRadii` | tile 22 / small 14 / pill 999 | corners |
 | `PaperGap` | 6/10/16/24/32 | spacing |
 | `PaperMotion` | 120/220/320/200 ms | press/swap/enter/exit |
 
-## Atoms (`PaperComponents.kt`) — the reused-everything set
+## Atoms (`PaperComponents.kt` / `PaperChrome.kt`) — the reused-everything set
 
-- `BentoTile` — shadowed rounded surface; optional `selected` (accent-soft) and `onClick`
+- `BentoTile` — bordered rounded surface; optional `selected` (accent wash) and `onClick`
 - `StatNumber` + `StatCaption` — the big-number/uppercase-label pair
-- `SegmentedPill<T>` — typed options, sliding active capsule; used for every toggle (flash mode, scan mode, versions…)
-- `SmoothSwitch` — animated iOS track+knob, built on tokens
+- `SegmentedPill<T>` — typed options, sliding active capsule; used for every toggle (scan mode, versions…)
+- `SmoothSwitch` — animated track+knob, built on tokens
 - `StatusBadge` — Queued / Working / Digitized / Failed (exactly one per item)
-- `ScreenHeader` — title + subtitle, consistent rhythm
+- `ScreenHeader` / `BrandHeader` — title + optional caption, brand mark
+- `IconAction` / `ActionBtn` / `FilterChip` — press-scale icon & label buttons
+- `ConfirmSheet` — in-app destructive confirmation (never raw system dialogs for deletes)
+- `MessageBus` + snackbar — app-wide transient feedback (no toasts)
 - `Modifier.pressScale` + `Modifier.tap` — interaction primitives
 
 ## Per-screen plans (implementation notes for future changes)
@@ -54,36 +61,39 @@ tiles (cover image, name, `done/total`, big count in accent) + dashed-feel
 `TileSunken` "New folder" tile. Long-press opens manage sheet (rename/delete;
 Default is protected in the repository, not just the UI). Floating ＋ scan FAB.
 
-**Scanner (Night)** — reference taken from the old app's best screen, rebuilt:
-top row = flash round-button + `Text|Notes` pill; below it `Single|Batch` pill;
-live "Digitizing N…" pill only when the queue is busy. Canvas viewfinder:
-rule-of-thirds + corner brackets (pure drawing, no assets). Shutter ring with
-white core (checkmark after single capture, spinner while processing). Icons
-softly counter-rotate with the smoothed tilt angle.
+**Scanner (capture session)** — top row: close · `Text|Notes` mode pill · flash
+cycle button. Canvas viewfinder: rule-of-thirds + corner brackets (pure
+drawing). Bottom: big shutter (haptic tick, spinner while writing) and, once
+pages exist, the **draft rail**: count + thumbnail strip (tap → editor, hold →
+delete, orange dot = edited) + Done. Save sheet names the document (or confirms
+append). Exiting with pages posts a *Draft kept* snackbar; Library then shows a
+**Resume** banner until saved/discarded. Camera opens via ListenableFuture —
+never blocks the UI thread.
 
-**Viewer (Night)** — photo ⇄ HTML via bottom chips; version strip
-`Current|Previous` + `Keep new / Restore previous` appears only when a backup
-exists; `StatusBadge` in the header; one scrim overlay while processing —
-centered spinner + plain-language message, never two stacked.
+**Crop editor** — page photo with a dimmed outside area and 4 draggable orange
+corner handles (homography-corrected live preview via ✓-toggle "Preview");
+rotate button, full-page reset, filter chips (Magic/Original/Gray/B&W). Edits
+buffer in the VM — ✓ applies, back discards, hint text says so.
 
-**Settings** — three titled sections: *AI providers* (tiles: name, key count,
-masked sample, ACTIVE marker), *Prompts* (one tile → editor), *Behavior*
-(auto-digitize switch, default-mode pill), *Storage* (folder tile re-picks SAF
-tree). Real version in the header (`BuildConfig`), privacy note at the bottom —
-no dead links, no fake build numbers.
+**Document hub** — rendered (corrected) page with pinch/double-tap zoom;
+filmstrip of numbered thumbnails with live status dots; one action row:
+`Page ⇄ Twin`, Digitize, Re-run (with correction note + mode), Export, Share;
+secondary strip: Move ◀ ▶, Rotate, delete (confirmed), and `Keep new /
+Restore` when a twin backup exists. Auto-flips to the twin the moment
+digitizing finishes; errors show their reason under the header badge.
+Working = one scrim overlay with a real Cancel. Top-right ＋ appends more pages.
 
-**Provider detail** — model list as selectable chips; key cards with masked
-secret, usage count and live *benched Ns* cooldown; add-key dialog (masked
-field); custom providers get delete; built-ins get re-point/reset.
+**Settings** — three sections: *AI providers* (tiles: name, key count, masked
+sample, ACTIVE marker), *Prompts*, *Behavior* (auto-digitize switch, default
+mode), *Storage* (folder tile re-picks SAF tree). Real version from
+`BuildConfig`, short privacy note. Provider detail: selectable model chips,
+key cards with masked secret + usage + *cooling — retry in Ns*, add-key
+dialog, custom-provider delete behind confirm.
 
-**Prompts editor** — mode pill + one large multiline field; **draft is
-saveable-local** (typed text never vanishes on background settings writes —
-the old app's silent-reset bug is designed out by using `rememberSaveable`
-keyed to mode only); Save / Reset-default rows with live char count.
+**Library** — brand header (mark + name, live "N working"), document grid
+(cover, `Np`, `M✓` digitized), search field + sort toggle, folder chips +
+new-folder chip, long-press multi-select (batch Digitize / Delete), ⋮ manage
+with confirm, empty state with the mark, accent ＋ scan FAB, resume-draft banner.
 
-**Bottom bar** — pill-shaped floating tile: Library · (raised accent scan FAB)
-· Settings. Slides away on focus screens. Never on Scanner/Viewer.
-
-**Motion** — presses 120ms; selection swaps 220ms; screens enter with
-`AnimatedVisibility` slide (bar) and standard fade (nav). No parrot-spinning
-decorative animation: motion exists to confirm input and track state.
+**Motion** — presses 120ms; selection swaps 220ms; sheets/dialogs standard
+fade. Motion confirms input and tracks state — never decorative.

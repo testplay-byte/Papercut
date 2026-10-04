@@ -8,16 +8,17 @@ chasing Gradle project edges.
 ```
 com.papercut.app
 ├── PapercutApp / AppContainer   ← manual DI root (see below)
-├── MainActivity                 ← edge-to-edge host, folder-gate root composable
-├── navigation/                  ← Routes, NavHost, shared bottom bar
+├── MainActivity                 ← edge-to-edge host, storage-permission gate composable
+├── navigation/                  ← type-safe Routes + NavHost
 ├── di/PaperViewModel.kt         ← appViewModel{} helper (one ViewModel factory)
 ├── core/
-│   ├── design/                  ← bento tokens + reusable atoms ONLY
-│   ├── data/                    ← repositories + AI transport + renderer
-│   │   └── model/               ← serializable settings doc + view models
-│   └── domain/                  ← ProcessingQueue, PromptTemplates, OrientationTracker
+│   ├── design/                  ← bento tokens + reusable atoms + MessageBus ONLY
+│   ├── data/                    ← repositories + AI transport + renderer + PDF + pipeline
+│   │   └── model/               ← serializable settings doc + document/page models
+│   └── domain/                  ← ProcessingQueue, DraftStore, PromptTemplates,
+│                                  OrientationTracker, PageGeometry (pure, tested)
 └── feature/
-    ├── onboarding · scanner · library · viewer · settings · provider · prompt
+    ├── onboarding · scanner · editor · document · library · settings · provider · prompt
 ```
 
 ## The dependency rule
@@ -33,7 +34,8 @@ The one cross-feature reuse (high-res render, status badge, pill toggle) lives i
 `PapercutApp` (Application) builds one `AppContainer` holding singletons:
 
 ```
-SettingsRepository ── SecretStore ── ScanRepository ── AiClient ── HtmlRenderer ── ProcessingQueue
+SettingsRepository ── SecretStore ── DocumentRepository ── AiClient ── HtmlRenderer ── ProcessingQueue
+                                              └── DraftStore (capture session)   └── MessageBus (snackbars)
 ```
 
 ViewModels get it via `appViewModel { c -> XViewModel(c) }` (`di/`). No Hilt, no
@@ -51,8 +53,8 @@ Repository/Queue  --StateFlow-->  ViewModel  --collectAsState-->  Composable
 - Every screen has **one ViewModel**; state survives navigation/rotation because
   it lives in the VM, not `remember`.
 - `ProcessingQueue.statuses` is the **single** source for every status badge —
-  one map, keyed `"$folder/$scan"`. The old app scattered per-screen job state and
-  stacked two overlays at once.
+  one map, keyed `"$folder/$doc#$page"`. The old app scattered per-screen job
+  state and stacked two overlays at once.
 - ViewModels own their `viewModelScope`; repositories own their IO scope. No
   floating `CoroutineScope()` anywhere.
 
@@ -73,25 +75,36 @@ Repository/Queue  --StateFlow-->  ViewModel  --collectAsState-->  Composable
   don't bench (they're the provider's fault, not the key's). Up to
   `MAX_ATTEMPTS_PER_TASK` across different keys before surfacing an error.
 
-## Storage — ScanRepository
+## Storage — DocumentRepository (v2)
 
-Scoped Storage via SAF. User picks a root tree; inside it we create:
+Scoped Storage via SAF. User picks a root tree; inside it we create a
+**document-centric** layout — a document is a folder, each page a numbered
+file. Edits are non-destructive (stored in `meta.json`, applied on render):
 
 ```
 Papercut/
   Default/                 (first folder, undeletable)
   <MyFolder>/
-    IMG_<ts>.jpg           original
-    IMG_<ts>.html          current digitized
-    IMG_<ts>.prev.html     single backup (from re-improve)
+    <Doc Name>/
+      meta.json            DocumentMeta { name, createdAt, pages[] }
+      page-01.jpg          original capture (crop/rotation/filter in meta)
+      page-01.html         current AI digital twin
+      page-01.prev.html    single twin backup (from Re-run)
+    IMG_<ts>.jpg           legacy v1 scan — auto-bridged as a 1-page document
 ```
 
-- Base name is the **stable id** — no filename suffix-mangling tricks.
-- Every method is `withContext(Dispatchers.IO)`. The old app did disk IO on the
-  main thread in three screens (ANR risk).
-- Versioning: one backup slot. `saveHtml` demotes current→prev before writing;
-  `restoreBackup` swaps; `discardBackup` clears. Matches the agreed "simple
-  current + one backup" model.
+- `PageGeometry` (pure JVM) solves the perspective homography and sanity-checks
+  the crop quad; `PagePipeline` applies warp→rotate→filter to pixels; both are
+  unit-tested in CI (`PageGeometryTest`).
+- Reorder/delete (`setOrder`/`deletePage`) move photos, twins AND backups in
+  lockstep so a page never pairs with the wrong twin. `savePageHtml` resolves
+  the slot by photo identity, surviving a reorder mid-AI-call.
+- `DraftStore` (app-scoped) holds the in-progress capture session so pages and
+  crops survive navigation between Scanner and Editor.
+- `PdfExporter` builds a valid PDF 1.4 in-memory (JPEG pages + hand-built xref)
+  with zero external dependencies.
+- All IO runs on `Dispatchers.IO` inside the repository (the old app hit disk on
+  the main thread).
 
 ## Orientation — OrientationTracker
 

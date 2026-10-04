@@ -196,11 +196,9 @@ class DocumentViewModel(
         val uri = withContext(Dispatchers.Default) {
             try {
                 val bitmaps = pages.mapNotNull { p ->
-                    renderPage(p)?.let { bmp ->
-                        val flat = com.papercut.app.core.data.PagePipeline.flattenForPdf(bmp)
-                        if (flat !== bmp) flat.also { } // keep both: bmp cached, flat for pdf
-                        flat
-                    }
+                    // flattenForPdf returns a NEW opaque bitmap (never the
+                    // cached render) — safe to recycle after the PDF is built
+                    renderPage(p)?.let { com.papercut.app.core.data.PagePipeline.flattenForPdf(it) }
                 }
                 if (bitmaps.isEmpty()) null
                 else {

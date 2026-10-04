@@ -19,8 +19,9 @@ Every step of the Papercut pipeline, from installing to printing a digitized pag
 
 Papercut ships presets but **no keys**. Add one:
 
-1. Bottom bar → **Settings** → **AI providers** → tap a provider tile
-   (start with **Google AI Studio** — free Gemini keys: aistudio.google.com → *Get API key*).
+1. Tap **Settings** (top-right gear on the Library) → **AI providers** → tap a
+   provider tile (start with **Google AI Studio** — free Gemini keys:
+   aistudio.google.com → *Get API key*).
 2. **＋ Add API key** → give it a name, paste the key → **Save key**.
    ✅ The key is encrypted with the device keystore; only its name and masked
    form (`sk-3••••••••c4a9`) are ever shown.
@@ -28,53 +29,68 @@ Papercut ships presets but **no keys**. Add one:
    the active model (the ACTIVE badge moves).
 4. Have several keys? Add them all — Papercut rotates them automatically:
    the least-used healthy key runs each job; a rate-limited key rests 60s,
-   a rejected key rests 10 min (visible on the key card: *benched 58s*).
+   a rejected key rests 10 min (visible on the key card: *cooling — retry in 58s*).
 
-**Using your own server instead?** `＋ Add / manage providers` → paste the
+**Using your own server instead?** **＋ Add / manage providers** → paste the
 base URL ending in `/v1` (e.g. `http://192.168.1.20:11434/v1` for Ollama),
 comma-separate the model names, create, add a key, select it. Any
 OpenAI-compatible vision endpoint works.
 
-## 3 · Scan
+## 3 · Capture a document
 
-1. Tap the big **scan button** (bottom-center). Allow camera access once.
+1. Tap the big **＋ scan button** (bottom-right). Allow camera access once.
 2. Frame the page inside the white corner brackets. Hold the phone however you
    like — the page stays upright in the file regardless of your tilt.
-3. Pick the pill options:
-   - **Text** → digital twin (exact layout, tables, formulas — slower, better)
-   - **Notes** → structured study summary (faster)
-   - **Single / Batch** — batch keeps you in the camera for multi-page capture
-   - ⚡ flash: off → on → auto
-4. Press the shutter. With **Auto-digitize** on (Settings → Behavior), the page
-   immediately enters the AI queue (pill: *Digitizing N…*).
-   - Single mode: you jump straight to the Viewer.
-   - Batch mode: keep shooting; tap the 🖼 icon when done.
+3. Pick the **Text / Notes** pill — this chooses the AI mode for the pages you
+   shoot (Text = exact digital twin; Notes = structured summary).
+4. Tap the shutter — your page lands in the **draft rail** at the bottom.
+   Keep shooting multi-page documents without leaving the camera.
+   - **Tap a thumbnail** → crop editor: drag the 4 orange corners over the
+     page edges (live perspective correction), rotate, choose a filter
+     (Magic / Original / Gray / B&W), ✓ to apply.
+   - **Hold a thumbnail** → delete that page.
+5. Tap **Done** → name the document → **Save**. Closing early is safe: the
+   Library shows a *Unsaved capture — Resume* banner until you save or discard.
+6. With **Auto-digitize** on (Settings → Behavior), every saved page instantly
+   enters the AI queue — watch the live counters in the document and Library.
 
 ## 4 · Library
 
-- Folders are bento tiles with cover photo + counts. **Long-press** = rename/delete.
-- **＋ New folder** tile; **＋ scan** button captures into the current folder.
-- Stat tiles up top show **total scans** and **digitized** across everything.
+- Documents are tiles with cover photo + page counts (`3p` · `2✓` digitized).
+- **Search** by name, **sort** recent ↔ name, **folder chips** under the header,
+  **＋** next to chips creates folders.
+- **Long-press** a document to multi-select → batch **Digitize** or **Delete**;
+  tap **⋮** on a tile for rename/delete with confirm.
+- The top bar shows how many pages are working in the queue.
 
-## 5 · Viewer — review, fix, restore
+## 5 · Document hub — review, fix, restore
 
-Open any scan:
+Open any document:
 
-- Toggle **Photo ⇄ Digital** to compare the twin against the original page.
-- **Re-improve** → optional note (*"the table on the right was dropped"*) →
-  the AI re-runs with your note appended; the previous HTML is kept automatically.
-- When a backup exists, the strip **Current / Previous** + **Keep new** /
-  **Restore previous** resolves it in one tap.
-- While queued/working you see a single clean overlay — cancel-safe, error cards
-  show the reason (e.g. *Rate limited by provider (429)*).
+- The page shows its **corrected render** (crop + filter). Pinch to zoom,
+  double-tap for 2.5×. The filmstrip below switches pages; badges show status.
+- **Twin ⇄ Page** toggles between the photo and the digitized HTML — the view
+  flips to the twin automatically the moment digitizing finishes.
+- **Digitize** runs the AI on the current page (its stored Text/Notes mode);
+  **Re-run** lets you type what went wrong (*"the table on the right was
+  dropped"*) — the previous twin is kept automatically.
+- When a backup exists: **Old twin** → **Keep new** / **Restore**.
+- Working pages show one overlay with a **Cancel**; errors show the reason
+  right under the badge (e.g. *Rate limited by provider (429)*).
+- Page ops: **Move ◀ ▶**, **Rotate**, **＋ add pages** (top bar, back into the
+  camera), delete (needs confirm).
 
 ## 6 · Export & share
 
-- **Export 4K** → the HTML renders at A4/300dpi and lands in
-  **Pictures/Papercut-export** as PNG (print-quality). MathJax formulas are
-  fully typeset before capture — no blank crops.
-- **Share** → hands the digitized `.html` to any app (browser, email, Drive);
-  the file leaves via a private share cache, your library folder is never exposed.
+From the document's **Export** sheet:
+
+- **PDF — all pages** → corrected pages assembled into one PDF in
+  **Downloads** (opens immediately).
+- **PDF — share** → the same file straight to any app.
+- **4K image** (digitized pages) → the twin rendered at A4/300dpi into
+  **Pictures/Papercut** as PNG. MathJax formulas are fully typeset before
+  capture — no blank crops.
+- **Share** (action bar) → the current page's photo to any app.
 
 ## 7 · Prompts (make the AI yours)
 
