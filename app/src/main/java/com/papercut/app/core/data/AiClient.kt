@@ -183,9 +183,9 @@ class AiClient(private val secrets: SecretStore) {
             else AiException.Server(code, msg)
         }
 
-        val choice = (root as? JsonObject)?.get("choices") as? JsonArray
-            ?.firstOrNull() as? JsonObject
+        val choices = ((root as? JsonObject)?.get("choices") as? JsonArray)
             ?: throw AiException.EmptyResult()
+        val choice = choices.firstOrNull() as? JsonObject ?: throw AiException.EmptyResult()
         val finish = (choice["finish_reason"] as? JsonPrimitive)?.contentOrNull
         if (finish == "length") throw AiException.Truncated()
 

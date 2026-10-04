@@ -17,6 +17,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -62,7 +63,7 @@ class ProcessingQueue(
     private val queue = Channel<Task>(MAX_QUEUED)
     private val runningJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
     private val cancelledKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     init {
         scope.launch {
@@ -177,7 +178,7 @@ class ProcessingQueue(
                 }
                 if (attempt > 1) delay(attempt * 1_500L) // back off before a paid retry
 
-                val outcome = try {
+                val outcome: AiException? = try {
                     val html = ai.digitize(provider, model, keyEntry, rendered, prompt)
                     if (key in cancelledKeys) throw CancellationException("cancelled")
                     if (!docs.savePageHtml(task.page, html)) {

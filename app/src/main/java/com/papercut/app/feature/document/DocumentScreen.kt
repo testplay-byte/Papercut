@@ -3,6 +3,7 @@ package com.papercut.app.feature.document
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -454,16 +455,17 @@ private fun HtmlStage(html: String?, backup: Boolean) {
                 }
             },
             update = { view ->
-                if (view.tag != html) {
-                    view.tag = html
-                    val withViewport = html.replaceFirst(
-                        Regex("<head>", RegexOption.IGNORE_CASE),
-                        "<head><meta name="viewport" content="width=1080, initial-scale=1">",
-                    )
+                // reload only when the doc OR the zoom mode changes (no flicker)
+                val token = html.hashCode().toString() + (if (zoomed) ":z" else "")
+                if (view.tag != token) {
+                    view.tag = token
+                    view.settings.setInitialScale(if (zoomed) 160 else 100)
+                    val meta = "<meta name=\"viewport\" content=\"width=1080, initial-scale=1\">"
+                    val withViewport =
+                        if (Regex("<meta\s+name=.viewport", RegexOption.IGNORE_CASE).containsMatchIn(html)) html
+                        else html.replaceFirst(Regex("<head>", RegexOption.IGNORE_CASE), "<head>$meta")
                     view.loadDataWithBaseURL(null, withViewport, "text/html", "UTF-8", null)
                 }
-                view.setZoomControlsShown(true)
-                if (zoomed) view.zoomBy(1.6f) else view.resetZoom()
             },
             modifier = Modifier.fillMaxSize(),
         )
