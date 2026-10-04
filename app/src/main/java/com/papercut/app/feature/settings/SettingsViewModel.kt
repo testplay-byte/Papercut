@@ -120,6 +120,12 @@ class ProviderViewModel(
         container.settings.upsertProvider(
             current.copy(name = name, baseUrl = baseUrl, models = models),
         )
+        // an active model that no longer exists would silently digitize nothing
+        val after = container.settings.settings.value
+        if (after.activeProviderId == providerId && after.activeModel !in models) {
+            container.settings.update { it.copy(activeModel = models.firstOrNull()) }
+        }
+        container.messages.post("Provider saved")
     }
 
     fun selectModel(model: String) = container.settings.update {

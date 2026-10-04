@@ -111,12 +111,106 @@ fun ProviderScreen(providerId: String, onBack: () -> Unit) {
             modifier = Modifier.fillMaxSize(),
         ) {
             item {
+                // connection editor — without this the local presets (Ollama /
+                // LM Studio) are unusable: their URL must point at the PC's LAN IP
+                var editing by remember { mutableStateOf(false) }
+                BentoTile(modifier = Modifier.fillMaxWidth()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            StatCaption("Connection")
+                            Text(
+                                p.baseUrl,
+                                color = PaperColors.Ink,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                            )
+                        }
+                        val editInter = remember { MutableInteractionSource() }
+                        Box(
+                            modifier = Modifier
+                                .pressScale(editInter)
+                                .clip(RoundedCornerShape(PaperRadii.pill))
+                                .background(PaperColors.TileSunken)
+                                .tap(editInter) { editing = !editing }
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                        ) {
+                            Text(
+                                if (editing) "Close" else "Edit",
+                                color = PaperColors.Accent,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                    if (editing) {
+                        var name by remember(p.id) { mutableStateOf(p.name) }
+                        var url by remember(p.id) { mutableStateOf(p.baseUrl) }
+                        var models by remember(p.id) { mutableStateOf(p.models.joinToString(", ")) }
+                        Column(
+                            modifier = Modifier.padding(top = PaperGap.s),
+                            verticalArrangement = Arrangement.spacedBy(PaperGap.s),
+                        ) {
+                            OutlinedTextField(
+                                value = name, onValueChange = { name = it },
+                                label = { Text("Name") }, singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            OutlinedTextField(
+                                value = url, onValueChange = { url = it },
+                                label = { Text("Base URL") }, singleLine = true,
+                                placeholder = { Text("http://192.168.1.2:11434/v1") },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            OutlinedTextField(
+                                value = models, onValueChange = { models = it },
+                                label = { Text("Models") },
+                                placeholder = { Text("llama3.2-vision:11b, qwen2.5vl") },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(PaperGap.s)) {
+                                val saveInter = remember { MutableInteractionSource() }
+                                Box(
+                                    modifier = Modifier
+                                        .pressScale(saveInter)
+                                        .clip(RoundedCornerShape(PaperRadii.pill))
+                                        .background(
+                                            if (url.startsWith("http")) PaperColors.Accent else PaperColors.TileSunken
+                                        )
+                                        .then(
+                                            if (url.startsWith("http")) Modifier.tap(saveInter) {
+                                                vm.saveProvider(
+                                                    name.trim().ifBlank { p.name },
+                                                    url.trim().trimEnd('/'),
+                                                    models.split(',').map { it.trim() }.filter { it.isNotEmpty() },
+                                                )
+                                                editing = false
+                                            } else Modifier
+                                        )
+                                        .padding(horizontal = 18.dp, vertical = 9.dp),
+                                ) {
+                                    Text(
+                                        "Save",
+                                        color = if (url.startsWith("http")) PaperColors.Canvas else PaperColors.InkFaint,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
+                                if (!p.requiresKey) {
+                                    StatCaption("no API key needed")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
                 // model picker
                 BentoTile(modifier = Modifier.fillMaxWidth()) {
                     StatCaption("Model — tap to select")
                     Column(modifier = Modifier.padding(top = PaperGap.s), verticalArrangement = Arrangement.spacedBy(PaperGap.xs)) {
                         if (p.models.isEmpty()) {
-                            StatCaption("no models — add them via + Add / manage providers")
+                            StatCaption("add models in Connection above")
                         }
                         p.models.forEach { model ->
                             val isActive = p.id == active.activeProviderId && model == active.activeModel
