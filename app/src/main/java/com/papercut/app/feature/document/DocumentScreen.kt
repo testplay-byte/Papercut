@@ -459,7 +459,7 @@ private fun HtmlStage(html: String?, backup: Boolean) {
                 val token = html.hashCode().toString() + (if (zoomed) ":z" else "")
                 if (view.tag != token) {
                     view.tag = token
-                    view.settings.setInitialScale(if (zoomed) 160 else 100)
+                    view.setInitialScale(if (zoomed) 160 else 100)
                     val meta = "<meta name=\"viewport\" content=\"width=1080, initial-scale=1\">"
                     val withViewport =
                         if (Regex("<meta\s+name=.viewport", RegexOption.IGNORE_CASE).containsMatchIn(html)) html

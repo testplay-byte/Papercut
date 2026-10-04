@@ -178,14 +178,15 @@ class ProcessingQueue(
                 }
                 if (attempt > 1) delay(attempt * 1_500L) // back off before a paid retry
 
+                // null = success; an AiException = this attempt's failure
                 val outcome: AiException? = try {
                     val html = ai.digitize(provider, model, keyEntry, rendered, prompt)
                     if (key in cancelledKeys) throw CancellationException("cancelled")
-                    if (!docs.savePageHtml(task.page, html)) {
-                        AiException.StorageFailed() // not retryable — stop burning keys
-                    } else {
+                    if (docs.savePageHtml(task.page, html)) {
                         if (keyEntry != null) markKeySuccess(keyEntry.id)
                         null
+                    } else {
+                        AiException.StorageFailed() // not retryable — stop burning keys
                     }
                 } catch (e: CancellationException) {
                     rendered.recycle()
@@ -194,7 +195,7 @@ class ProcessingQueue(
                     if (keyEntry != null) handleKeyFailure(keyEntry.id, e)
                     e
                 } catch (e: Exception) {
-                    lastError = AiException.Network(e.message ?: "")
+                    AiException.Network(e.message ?: "")
                 }
                 if (outcome == null) {
                     rendered.recycle()

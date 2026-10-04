@@ -49,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -112,9 +113,15 @@ fun ScannerScreen(
         if (!cameraPermission.status.isGranted) {
             // Once the system stops showing the dialog, launchPermissionRequest()
             // silently does nothing — so offer App Settings + keep Back reachable.
+            // accompanist's PermissionStatus has no shouldShowRationale; track
+            // "we asked and they said no" ourselves so the nudge can offer
+            // App Settings once the system stops showing the dialog.
+            var askedOnce by rememberSaveable { mutableStateOf(false) }
+            LaunchedEffect(cameraPermission.status.isGranted) {
+                if (cameraPermission.status.isGranted) askedOnce = true
+            }
             PermissionNudge(
-                permanentlyDenied = !cameraPermission.status.shouldShowRationale &&
-                    cameraPermission.launchedOnce,
+                permanentlyDenied = askedOnce,
                 onAllow = { cameraPermission.launchPermissionRequest() },
                 onOpenSettings = {
                     context.startActivity(android.content.Intent(

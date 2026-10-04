@@ -469,7 +469,6 @@ private fun LaunchedEffectRefresh(vm: LibraryViewModel, scope: String?) {
     androidx.compose.runtime.LaunchedEffect(scope) { vm.load(scope) }
 }
 
-@Composable
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun FolderChip(
@@ -535,7 +534,8 @@ private fun DocTile(
             modifier = Modifier.fillMaxSize().padding(10.dp),
             contentAlignment = Alignment.Center,
         ) {
-            val letter = {
+            @Composable
+            fun letter() {
                 Text(
                     doc.name.take(1).uppercase(),
                     fontSize = 34.sp, fontWeight = FontWeight.Bold,

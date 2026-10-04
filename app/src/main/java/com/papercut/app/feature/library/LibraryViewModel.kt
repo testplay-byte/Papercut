@@ -122,7 +122,7 @@ class LibraryViewModel(
     }
 
     fun deleteDocument(doc: DocumentSummary) = viewModelScope.launch {
-        container.queue.cancelDocument(doc.folder, doc.name)
+        container.queue.invalidateDocument(doc.folder, doc.name)
         if (container.docs.deleteDocument(doc)) load(_scope.value)
         else container.messages.post("Could not delete")
     }
@@ -144,7 +144,7 @@ class LibraryViewModel(
     fun deleteSelected() = viewModelScope.launch {
         val targets = _docs.value.filter { (it.folder to it.name) in _selected.value }
         targets.forEach { s ->
-            container.queue.cancelDocument(s.folder, s.name)
+            container.queue.invalidateDocument(s.folder, s.name)
             container.docs.deleteDocument(s)
         }
         _selected.value = emptySet()
