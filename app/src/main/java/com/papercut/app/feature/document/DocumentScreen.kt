@@ -462,7 +462,7 @@ private fun HtmlStage(html: String?, backup: Boolean) {
                     view.setInitialScale(if (zoomed) 160 else 100)
                     val meta = "<meta name=\"viewport\" content=\"width=1080, initial-scale=1\">"
                     val withViewport =
-                        if (Regex("<meta\s+name=.viewport", RegexOption.IGNORE_CASE).containsMatchIn(html)) html
+                        if (Regex("<meta\\s+name=.viewport", RegexOption.IGNORE_CASE).containsMatchIn(html)) html
                         else html.replaceFirst(Regex("<head>", RegexOption.IGNORE_CASE), "<head>$meta")
                     view.loadDataWithBaseURL(null, withViewport, "text/html", "UTF-8", null)
                 }
