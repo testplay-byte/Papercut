@@ -132,6 +132,12 @@ class DocumentViewModel(
             page.folder, page.docName, page.spec.index,
         )]?.status ?: ScanStatus.Plain
 
+    /** Pages working/queued app-wide — "waiting" with a number beats an
+     *  indefinite spinner. */
+    fun queueDepth(): Int = statuses.value.values.count {
+        it.status == ScanStatus.Queued || it.status == ScanStatus.Processing
+    }
+
     // ---------------- versions ----------------
 
     fun showHtml(page: PageView, backup: Boolean) = viewModelScope.launch {

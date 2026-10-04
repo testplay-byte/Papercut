@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import com.papercut.app.core.data.model.AiProvider
 import com.papercut.app.core.data.model.KeyEntry
 import io.ktor.client.HttpClient
-import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
@@ -12,9 +11,12 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -115,6 +117,8 @@ class AiClient(private val secrets: SecretStore) {
         /** null = omit entirely (o-series/gpt-5 reject an explicit temperature). */
         val temperature: Float? = null,
         val max_tokens: Int = 16384,
+        /** true = SSE stream; lets the UI show the twin WHILE it generates. */
+        val stream: Boolean? = null,
     )
 
     @Serializable
@@ -132,7 +136,11 @@ class AiClient(private val secrets: SecretStore) {
 
     /**
      * Send one vision request. [key] may be null for keyless local servers.
-     * Throws [AiException] for every failure mode; never swallows cancellation.
+     * Streams via SSE and reports progress through [onPartial] so the UI can
+     * show the twin WHILE the model writes it. Throws [AiException] for every
+     * failure mode; never swallows cancellation.
+     * Returns [Salvaged] — a finish_reason=length answer is auto-closed, not
+     * discarded (see [closeOpenHtml]).
      */
     suspend fun digitize(
         provider: AiProvider,
@@ -140,8 +148,9 @@ class AiClient(private val secrets: SecretStore) {
         key: KeyEntry?,
         bitmap: Bitmap,
         prompt: String,
+        onPartial: ((String) -> Unit)? = null,
         maxSidePx: Int = 1568, // vision models cap useful detail around here
-    ): String {
+    ): Salvaged {
         val host = provider.baseUrl.substringAfter("://").substringBefore('/')
 
         val dataUrl = "data:image/jpeg;base64," + encodeJpeg(bitmap, maxSidePx)
@@ -158,6 +167,7 @@ class AiClient(private val secrets: SecretStore) {
                         ),
                     ),
                 ),
+                stream = onPartial != null,
             ),
         )
 
@@ -199,14 +209,78 @@ class AiClient(private val secrets: SecretStore) {
             }
         }
 
-        val root: JsonElement = try {
-            json.parseToJsonElement(response.body<String>())
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            throw AiException.EmptyResult()
+        if (onPartial != null) {
+            // SSE stream: "data: {chunk}\n\n" lines until "data: [DONE]".
+            val sb = StringBuilder()
+            try {
+                val channel: io.ktor.utils.io.ByteReadChannel = response.bodyAsChannel()
+                while (!channel.isClosedForRead) {
+                    val line = channel.readUTF8Line() ?: break
+                    if (!line.startsWith("data:")) continue
+                    val payload = line.removePrefix("data:").trim()
+                    if (payload == "[DONE]") break
+                    val chunk: JsonElement = try {
+                        json.parseToJsonElement(payload)
+                    } catch (_: Exception) {
+                        continue // keepalive comments, partial lines, etc.
+                    }
+                    val delta = ((((chunk as? JsonObject)?.get("choices") as? JsonArray)
+                        ?.firstOrNull() as? JsonObject)?.get("delta") as? JsonObject)
+                    val piece = (delta?.get("content") as? JsonPrimitive)?.contentOrNull
+                    if (piece != null) {
+                        sb.append(piece)
+                        onPartial(sb.toString())
+                    }
+                    // some gateways carry the error in-stream with no content
+                    (chunk as? JsonObject)?.get("error")?.let { err ->
+                        val eo = err as? JsonObject
+                        val code = (eo?.get("code") as? JsonPrimitive)?.intOrNull ?: 0
+                        val msg = (eo?.get("message") as? JsonPrimitive)?.contentOrNull
+                        throw when {
+                            code == 401 || code == 403 -> AiException.Auth()
+                            code == 404 -> AiException.NotFound(code, msg)
+                            code != 0 -> AiException.Server(code, msg)
+                            msg != null -> AiException.Server(0, msg)
+                            else -> AiException.Server(0)
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: AiException) {
+                throw e
+            } catch (_: Exception) {
+                // mid-stream transport failure: salvage what streamed in
+                if (sb.isEmpty()) throw AiException.Network(host)
+            }
+            if (sb.isEmpty()) {
+                // provider accepted the request but streamed nothing usable —
+                // some gateways answer streaming with a plain JSON body
+                val plain = try { response.bodyAsText() } catch (_: Exception) { null }
+                val nonStream = plain?.let { parseChatResponse(it) }
+                if (nonStream != null) return nonStream
+                throw AiException.EmptyResult()
+            }
+            val cleaned = sanitizeHtml(sb.toString())
+            if (!cleaned.contains("</html>", ignoreCase = true)) {
+                val salvaged = closeOpenHtml(cleaned) ?: throw AiException.Truncated()
+                return Salvaged(salvaged, wasTruncated = true)
+            }
+            return Salvaged(cleaned, wasTruncated = false)
         }
 
+        val plain = response.bodyAsText()
+        parseChatResponse(plain)?.let { return it }
+        throw AiException.EmptyResult()
+    }
+
+    /** Shared parser for a non-streaming chat-completions body. */
+    private fun parseChatResponse(body: String): Salvaged? {
+        val root: JsonElement = try {
+            json.parseToJsonElement(body)
+        } catch (_: Exception) {
+            return null
+        }
         // Some providers (OpenRouter) return HTTP 200 with an error body.
         (root as? JsonObject)?.get("error")?.let { err ->
             val eo = err as? JsonObject
@@ -221,17 +295,56 @@ class AiClient(private val secrets: SecretStore) {
                 else -> AiException.Server(0)
             }
         }
-
         val choices = ((root as? JsonObject)?.get("choices") as? JsonArray)
-            ?: throw AiException.EmptyResult()
-        val choice = choices.firstOrNull() as? JsonObject ?: throw AiException.EmptyResult()
+            ?: return null
+        val choice = choices.firstOrNull() as? JsonObject ?: return null
         val finish = (choice["finish_reason"] as? JsonPrimitive)?.contentOrNull
-        if (finish == "length") throw AiException.Truncated()
-
-        val text = extractContent(choice) ?: throw AiException.EmptyResult()
+        val text = extractContent(choice) ?: return null
         val cleaned = sanitizeHtml(text)
-        if (!cleaned.contains("</html>", ignoreCase = true)) throw AiException.Truncated()
-        return cleaned
+        // the model ran out of tokens mid-document — that's a PAID result,
+        // salvage what arrived: close open tags and ship it. finish_reason
+        // = "length" flags the twin as partial rather than discarding it.
+        if (!cleaned.contains("</html>", ignoreCase = true)) {
+            val salvaged = closeOpenHtml(cleaned) ?: throw AiException.Truncated()
+            return Salvaged(salvaged, wasTruncated = true)
+        }
+        return Salvaged(cleaned, wasTruncated = finish == "length")
+    }
+
+    data class Salvaged(val html: String, val wasTruncated: Boolean)
+
+    /**
+     * Close an HTML fragment that was cut mid-tag: drop a trailing partial tag,
+     * then close open elements in reverse order up to (and including) <html>.
+     * Returns null if there is no usable content at all.
+     */
+    private fun closeOpenHtml(fragment: String): String? {
+        var s = fragment.trim()
+        if (s.isEmpty()) return null
+        // a tag sliced in half ("...<td class=fo") is markup poison — drop it
+        val lastOpen = s.lastIndexOf('<')
+        if (lastOpen > s.lastIndexOf('>')) s = s.substring(0, lastOpen)
+        if (s.length < 30) return null // nothing usable arrived
+        // walk tags, track unclosed ones (void elements never need closing)
+        val void = setOf("br", "hr", "img", "meta", "link", "input", "area", "col", "source", "wbr")
+        val open = ArrayDeque<String>()
+        Regex("<(/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*?)(/?)>").findAll(s).forEach { m ->
+            val name = m.groupValues[2].lowercase()
+            if (m.groupValues[1] == "/") {
+                // a closing tag pops back to its opener (mismatched tags happen)
+                val idx = open.indexOfLast { it == name }
+                if (idx >= 0) while (open.size > idx) open.removeLastOrNull()
+            } else if (m.groupValues[4] == "/" || name in void) {
+                // self-closing or void — nothing to track
+            } else open.addLast(name)
+        }
+        val sb = StringBuilder(s)
+        // close document-level containers even if the model never opened them
+        // (browsers recover; the WebView renders fine)
+        for (tag in open.asReversed()) sb.append("</").append(tag).append('>')
+        if (!s.lowercase().contains("</body>")) sb.append("</body>")
+        if (!s.lowercase().contains("</html>")) sb.append("</html>")
+        return sb.toString()
     }
 
     /** message.content is a string OR an array of {type,text} parts — read both. */

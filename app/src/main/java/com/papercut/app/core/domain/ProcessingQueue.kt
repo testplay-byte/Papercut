@@ -53,7 +53,12 @@ class ProcessingQueue(
         fun statusKey(folder: String, doc: String, page: Int) = "$folder/$doc#$page"
     }
 
-    data class TaskState(val status: ScanStatus, val message: String? = null)
+    data class TaskState(
+        val status: ScanStatus,
+        val message: String? = null,
+        /** Live partial HTML while status is Processing — drives the streaming preview. */
+        val preview: String? = null,
+    )
 
     private val _statuses = MutableStateFlow<Map<String, TaskState>>(emptyMap())
     val statuses: StateFlow<Map<String, TaskState>> = _statuses.asStateFlow()
@@ -124,6 +129,22 @@ class ProcessingQueue(
         _statuses.update { it + (key to TaskState(status, message)) }
     }
 
+    /** Last preview push per key — streaming delivers tokens far faster than
+     *  a WebView can sensibly reload; ~1 update/sec keeps it live but calm. */
+    private val lastPreviewAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private fun setLivePreview(key: String, partial: String) {
+        if (key in cancelledKeys) return
+        val now = System.currentTimeMillis()
+        val last = lastPreviewAt[key] ?: 0L
+        if (now - last < 900L) return
+        lastPreviewAt[key] = now
+        _statuses.update { m ->
+            val cur = m[key] ?: return@update m
+            m + (key to cur.copy(preview = partial))
+        }
+    }
+
     private suspend fun process(task: Task) {
         val key = statusKey(task.page.folder, task.page.docName, task.page.spec.index)
         try {
@@ -189,11 +210,21 @@ class ProcessingQueue(
 
                 // null = success; an AiException = this attempt's failure
                 val outcome: AiException? = try {
-                    val html = ai.digitize(provider, model, keyEntry, rendered, prompt)
+                    // stream: the twin appears live in the document screen as
+                    // the model writes it
+                    val result = ai.digitize(
+                        provider, model, keyEntry, rendered, prompt,
+                        onPartial = { partial -> setLivePreview(key, partial) },
+                    )
                     if (key in cancelledKeys) throw CancellationException("cancelled")
-                    if (docs.savePageHtml(task.page, html)) {
+                    if (docs.savePageHtml(task.page, result.html)) {
                         if (keyEntry != null) markKeySuccess(keyEntry.id)
-                        null
+                        if (result.wasTruncated) {
+                            // partial twin still saved — tell the user what it is
+                            setStatus(key, ScanStatus.Done,
+                                "Partial — the model hit its length limit; Re-run for the rest")
+                            null
+                        } else null
                     } else {
                         AiException.StorageFailed() // not retryable — stop burning keys
                     }
@@ -206,7 +237,10 @@ class ProcessingQueue(
                     AiException.Network(e.message ?: "")
                 }
                 if (outcome == null) {
-                    setStatus(key, ScanStatus.Done)
+                    // Done already carries its message on the truncated path —
+                    // don't overwrite it with a bare Done
+                    if (_statuses.value[key]?.status != ScanStatus.Done)
+                        setStatus(key, ScanStatus.Done)
                     return
                 }
                 lastError = outcome

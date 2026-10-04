@@ -176,9 +176,14 @@ fun DocumentScreen(
                     }
                     Column(horizontalAlignment = Alignment.End) {
                         StatusBadge(status)
-                        if (status == ScanStatus.Error && statusMessage != null) {
-                            Text(statusMessage, color = PaperColors.Error, fontSize = 10.sp, maxLines = 2,
-                                modifier = Modifier.padding(top = 2.dp))
+                        if (statusMessage != null) {
+                            // Done pages can carry a note too ("Partial — ...")
+                            Text(
+                                statusMessage,
+                                color = if (status == ScanStatus.Error) PaperColors.Error else PaperColors.NightInkSecondary,
+                                fontSize = 10.sp, maxLines = 2,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
                         }
                     }
                     val addInter = remember { MutableInteractionSource() }
@@ -194,18 +199,33 @@ fun DocumentScreen(
 
                 // main stage
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    when (mode) {
-                        ViewMode.PAGE -> RenderedPage(vm = vm, page = page)
-                        ViewMode.HTML -> HtmlStage(
+                    val taskState = statusMap["${folderName}/${docName}#${page.spec.index}"]
+                    val livePreview = taskState?.preview
+                    when {
+                        // live streaming: the twin renders AS the model writes it
+                        mode == ViewMode.HTML && !livePreview.isNullOrEmpty() &&
+                            (status == ScanStatus.Processing || status == ScanStatus.Queued) ->
+                            HtmlStage(html = livePreview, backup = false)
+                        mode == ViewMode.HTML -> HtmlStage(
                             html = vm.htmlContent.collectAsState().value,
                             backup = vm.showingBackup,
                         )
+                        else -> RenderedPage(vm = vm, page = page)
                     }
 
-                    // single overlay while working — with a real Cancel
-                    if (status == ScanStatus.Processing || status == ScanStatus.Queued) {
+                    // single overlay while working — but once tokens stream in,
+                    // the preview IS the feedback, so only cover the queued phase
+                    if (status == ScanStatus.Queued ||
+                        (status == ScanStatus.Processing && livePreview.isNullOrEmpty())
+                    ) {
                         WorkingOverlay(
                             queued = status == ScanStatus.Queued,
+                            depth = vm.queueDepth(),
+                            onCancel = { vm.cancelDigitize(page); mode = ViewMode.PAGE },
+                        )
+                    } else if (status == ScanStatus.Processing) {
+                        LiveStrip(
+                            modifier = Modifier.align(Alignment.TopCenter),
                             onCancel = { vm.cancelDigitize(page); mode = ViewMode.PAGE },
                         )
                     }
@@ -548,12 +568,16 @@ private fun PageThumb(vm: DocumentViewModel, page: PageView, status: ScanStatus,
 }
 
 @Composable
-private fun WorkingOverlay(queued: Boolean, onCancel: () -> Unit) {
+private fun WorkingOverlay(queued: Boolean, depth: Int = 1, onCancel: () -> Unit) {
     Box(Modifier.fillMaxSize().background(PaperColors.ScrimDark), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             CircularProgressIndicator(color = PaperColors.Accent)
-            Text(if (queued) "Waiting…" else "Digitizing…",
-                color = PaperColors.NightInk, fontSize = 13.sp, modifier = Modifier.padding(top = PaperGap.m))
+            Text(
+                if (queued && depth > 1) "Waiting — $depth pages in queue"
+                else if (queued) "Waiting..."
+                else "Digitizing...",
+                color = PaperColors.NightInk, fontSize = 13.sp, modifier = Modifier.padding(top = PaperGap.m),
+            )
             val cancelInter = remember { MutableInteractionSource() }
             Text(
                 "Cancel",
@@ -565,6 +589,38 @@ private fun WorkingOverlay(queued: Boolean, onCancel: () -> Unit) {
                     .padding(8.dp),
             )
         }
+    }
+}
+
+/** Slim strip during live generation — the streaming twin is the show, this
+ *  just labels it and keeps Cancel one tap away. */
+@Composable
+private fun LiveStrip(modifier: Modifier = Modifier, onCancel: () -> Unit) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(PaperGap.m)
+            .clip(RoundedCornerShape(PaperRadii.pill))
+            .background(Color.Black.copy(alpha = 0.55f))
+            .padding(horizontal = PaperGap.m, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PaperGap.s),
+    ) {
+        CircularProgressIndicator(strokeWidth = 2.dp, color = PaperColors.Accent, modifier = Modifier.size(14.dp))
+        Text(
+            "Writing…",
+            color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
+        )
+        val cancelInter = remember { MutableInteractionSource() }
+        Text(
+            "Cancel",
+            color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .pressScale(cancelInter)
+                .tap(cancelInter, onCancel)
+                .padding(horizontal = 4.dp, vertical = 2.dp),
+        )
     }
 }
 
