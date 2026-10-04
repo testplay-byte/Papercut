@@ -1,137 +1,159 @@
 package com.papercut.app.navigation
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.papercut.app.core.data.SettingsRepository
-import com.papercut.app.feature.library.FolderScreen
+import com.papercut.app.core.data.DocumentRepository
+import com.papercut.app.core.design.PaperColors
+import com.papercut.app.core.design.PaperRadii
+import com.papercut.app.core.design.rememberMessageCollector
+import com.papercut.app.feature.document.DocumentScreen
+import com.papercut.app.feature.editor.EditorScreen
 import com.papercut.app.feature.library.LibraryScreen
 import com.papercut.app.feature.prompt.PromptsScreen
 import com.papercut.app.feature.provider.ProviderScreen
 import com.papercut.app.feature.scanner.ScannerScreen
 import com.papercut.app.feature.settings.SettingsScreen
-import com.papercut.app.feature.viewer.ViewerScreen
 
 /**
- * Single NavHost + shared bento bottom bar.
- * Focus modes (scanner, viewer) hide the bar via one explicit route list —
- * the old app used fragile startsWith() string checks scattered in MainActivity.
+ * v2 NavHost: Library (all + per-folder scopes), capture-session Scanner,
+ * Editor (draft crop), Document hub, Settings trio. Snackbars are app-level.
  */
 @Composable
 fun PapercutNavHost(
     navController: NavHostController,
-    modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier,
+    messages: com.papercut.app.core.design.MessageBus,
+    modifier: Modifier = Modifier,
 ) {
-    val backStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = backStackEntry?.destination?.route
-
-    val showBar = currentRoute == Route.Library.path ||
-        currentRoute == Route.PATTERN_FOLDER ||
-        currentRoute == Route.Settings.path ||
-        currentRoute == Route.Prompts.path ||
-        currentRoute == Route.PATTERN_PROVIDER
+    val snackbarHost = remember { SnackbarHostState() }
 
     Scaffold(
         modifier = modifier,
-        bottomBar = {
-            AnimatedVisibility(
-                visible = showBar,
-                enter = slideInVertically(tween(220)) { it },
-                exit = slideOutVertically(tween(180)) { it },
-            ) {
-                val isSettingsSide = currentRoute == Route.Settings.path ||
-                    currentRoute == Route.Prompts.path ||
-                    currentRoute?.startsWith("provider/") == true
-                PaperBottomBar(
-                    selected = if (isSettingsSide) 1 else 0,
-                    onLibrary = {
-                        navController.navigate(Route.Library.path) {
-                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
-                    onScan = {
-                        val folder = backStackEntry?.arguments?.getString(Route.ARG_FOLDER)
-                            ?: SettingsRepository.DEFAULT_FOLDER
-                        navController.navigate(Route.Scanner(folder).path)
-                    },
-                    onSettings = {
-                        navController.navigate(Route.Settings.path) {
-                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
+        snackbarHost = {
+            SnackbarHost(snackbarHost) { data ->
+                Snackbar(
+                    snackbarData = data,
+                    containerColor = PaperColors.Tile,
+                    contentColor = PaperColors.Ink,
+                    actionColor = PaperColors.Accent,
+                    shape = RoundedCornerShape(PaperRadii.small),
                 )
             }
         },
     ) { innerPadding ->
+        rememberMessageCollector(messages, snackbarHost,
+            androidx.compose.runtime.rememberCoroutineScope())
+
         NavHost(
             navController = navController,
             startDestination = Route.Library.path,
-            modifier = androidx.compose.ui.Modifier
+            modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
+                .padding(innerPadding)
+                .background(PaperColors.Canvas),
         ) {
             composable(Route.Library.path) {
                 LibraryScreen(
+                    scope = null,
+                    onOpenDocument = { folder, name ->
+                        navController.navigate(Route.Document(folder, name).path)
+                    },
+                    onScanNew = {
+                        navController.navigate(Route.Scanner(DocumentRepository.DEFAULT_FOLDER).path)
+                    },
+                    onOpenSettings = { navController.navigate(Route.Settings.path) },
                     onOpenFolder = { name -> navController.navigate(Route.Folder(name).path) },
                 )
             }
             composable(
                 Route.PATTERN_FOLDER,
-                arguments = listOf(navArgument(Route.ARG_FOLDER) { defaultValue = SettingsRepository.DEFAULT_FOLDER }),
+                arguments = listOf(navArgument(Route.ARG_FOLDER) { type = NavType.StringType }),
             ) { entry ->
                 val folder = entry.arguments?.getString(Route.ARG_FOLDER)
-                    ?: SettingsRepository.DEFAULT_FOLDER
-                FolderScreen(
-                    folderName = folder,
+                    ?: DocumentRepository.DEFAULT_FOLDER
+                LibraryScreen(
+                    scope = folder,
+                    onOpenDocument = { _, name ->
+                        navController.navigate(Route.Document(folder, name).path)
+                    },
+                    onScanNew = { navController.navigate(Route.Scanner(folder).path) },
+                    onOpenSettings = { navController.navigate(Route.Settings.path) },
                     onBack = { navController.popBackStack() },
-                    onOpenScan = { scan -> navController.navigate(Route.Viewer(folder, scan).path) },
-                    onScanHere = { navController.navigate(Route.Scanner(folder).path) },
                 )
             }
             composable(
                 Route.PATTERN_SCANNER,
-                arguments = listOf(navArgument(Route.ARG_FOLDER) { defaultValue = SettingsRepository.DEFAULT_FOLDER }),
+                arguments = listOf(
+                    navArgument(Route.ARG_FOLDER) { type = NavType.StringType },
+                    navArgument(Route.ARG_DOC) { type = NavType.StringType; defaultValue = "-" },
+                ),
             ) { entry ->
                 val folder = entry.arguments?.getString(Route.ARG_FOLDER)
-                    ?: SettingsRepository.DEFAULT_FOLDER
+                    ?: DocumentRepository.DEFAULT_FOLDER
+                val doc = entry.arguments?.getString(Route.ARG_DOC)?.takeIf { it != "-" }
                 ScannerScreen(
                     folderName = folder,
-                    onDone = { navController.popBackStack() },
-                    onOpenLatest = { scan ->
-                        navController.navigate(Route.Viewer(folder, scan).path) {
-                            popUpTo(Route.PATTERN_SCANNER) { inclusive = true }
+                    appendToDoc = doc,
+                    onBack = { navController.popBackStack() },
+                    onEditPage = { index ->
+                        navController.navigate(Route.Editor(index).path)
+                    },
+                    onSaved = { savedFolder, savedName ->
+                        // go straight to the document we just saved
+                        navController.navigate(Route.Document(savedFolder, savedName).path) {
+                            popUpTo(Route.Library.path)
                         }
+                    },
+                    onDraftKept = { count ->
+                        messages.post("Draft kept — $count page(s) unfinished")
                     },
                 )
             }
             composable(
-                Route.PATTERN_VIEWER,
+                Route.PATTERN_EDITOR,
+                arguments = listOf(navArgument(Route.ARG_INDEX) { type = NavType.IntType }),
+            ) { entry ->
+                EditorScreen(
+                    draftIndex = entry.arguments?.getInt(Route.ARG_INDEX) ?: 0,
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(
+                Route.PATTERN_DOCUMENT,
                 arguments = listOf(
-                    navArgument(Route.ARG_FOLDER) { type = androidx.navigation.NavType.StringType },
-                    navArgument(Route.ARG_SCAN) { type = androidx.navigation.NavType.StringType },
+                    navArgument(Route.ARG_FOLDER) { type = NavType.StringType },
+                    navArgument(Route.ARG_DOC) { type = NavType.StringType },
                 ),
             ) { entry ->
-                ViewerScreen(
+                DocumentScreen(
                     folderName = entry.arguments?.getString(Route.ARG_FOLDER)
-                        ?: SettingsRepository.DEFAULT_FOLDER,
-                    scanName = entry.arguments?.getString(Route.ARG_SCAN) ?: "",
+                        ?: DocumentRepository.DEFAULT_FOLDER,
+                    docName = entry.arguments?.getString(Route.ARG_DOC) ?: "",
                     onBack = { navController.popBackStack() },
+                    onAddPages = {
+                        val f = entry.arguments?.getString(Route.ARG_FOLDER)
+                            ?: DocumentRepository.DEFAULT_FOLDER
+                        val d = entry.arguments?.getString(Route.ARG_DOC) ?: ""
+                        navController.navigate(Route.Scanner(f, d).path)
+                    },
                 )
             }
             composable(Route.Settings.path) {
@@ -142,7 +164,7 @@ fun PapercutNavHost(
             }
             composable(
                 Route.PATTERN_PROVIDER,
-                arguments = listOf(navArgument(Route.ARG_PROVIDER) { type = androidx.navigation.NavType.StringType }),
+                arguments = listOf(navArgument(Route.ARG_PROVIDER) { type = NavType.StringType }),
             ) { entry ->
                 ProviderScreen(
                     providerId = entry.arguments?.getString(Route.ARG_PROVIDER) ?: "",

@@ -6,15 +6,17 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import com.papercut.app.core.data.AiClient
 import com.papercut.app.core.data.AiException
-import com.papercut.app.core.data.ScanRepository
+import com.papercut.app.core.data.DocumentRepository
+import com.papercut.app.core.data.PagePipeline
 import com.papercut.app.core.data.SettingsRepository
 import com.papercut.app.core.data.model.KeyEntry
-import com.papercut.app.core.data.model.ScanItem
+import com.papercut.app.core.data.model.PageView
 import com.papercut.app.core.data.model.ScanMode
 import com.papercut.app.core.design.ScanStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,55 +25,46 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Serial AI processing queue — the domain heart of Papercut.
+ * Serial AI digitization queue — Papercut's domain heart.
  *
- * Design vs the old singleton:
- *  - owned by AppContainer (app scope), not an object; fully replaceable in tests
- *  - per-item status map drives ALL badges/overlays (single source, no stacked overlays)
- *  - key rotation with cooldowns: a 429 benches that key for 60s and moves to the
- *    next; a 401 benches it for 10min; retry advances to another key instead of
- *    failing the task on the first hiccup
- *  - cancellation is cooperative per task (job map), unlike the old flag-set hack
+ *  - one status map drives every badge/overlay (key "folder/doc#page")
+ *  - key rotation: LRU among non-cooling keys; 429 benches 60s, 401/403 10min;
+ *    up to MAX_ATTEMPTS across different keys before the task fails
+ *  - input image = the page AFTER crop/rotation/filter (clean input -> clean twin)
+ *  - real child jobs: cancel() actually interrupts running work
  */
 class ProcessingQueue(
     private val context: Context,
     private val settings: SettingsRepository,
-    private val scans: ScanRepository,
+    private val docs: DocumentRepository,
     private val ai: AiClient,
 ) {
     companion object {
         private const val COOLDOWN_RATE_LIMIT_MS = 60_000L
         private const val COOLDOWN_AUTH_MS = 600_000L
-        private const val MAX_ATTEMPTS_PER_TASK = 3 // different keys count as different attempts
-        private const val MAX_QUEUED = 64
+        private const val MAX_ATTEMPTS = 3
+        private const val MAX_QUEUED = 128
+
+        fun statusKey(folder: String, doc: String, page: Int) = "$folder/$doc#$page"
     }
 
-    data class Task(
-        val item: ScanItem,
-        val mode: ScanMode,
-        val feedback: String? = null,
-    )
+    data class TaskState(val status: ScanStatus, val message: String? = null)
 
     private val _statuses = MutableStateFlow<Map<String, TaskState>>(emptyMap())
-    /** key = "${folder}/${scanName}" */
     val statuses: StateFlow<Map<String, TaskState>> = _statuses.asStateFlow()
 
-    data class TaskState(val status: ScanStatus, val message: String? = null)
+    private data class Task(val page: PageView, val mode: ScanMode, val feedback: String?)
 
     private val queue = Channel<Task>(MAX_QUEUED)
     private val runningJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
     private val cancelledKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-    private val scope = CoroutineScope(Dispatchers.Default + Job())
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     init {
         scope.launch {
             for (task in queue) {
-                val key = statusKey(task)
-                if (key in cancelledKeys) { // cancelled while still queued
-                    cancelledKeys.remove(key)
-                    continue
-                }
-                // real child Job: cancel() can stop the work mid-flight
+                val key = statusKey(task.page.folder, task.page.docName, task.page.spec.index)
+                if (key in cancelledKeys) { cancelledKeys.remove(key); continue }
                 val job = scope.launch { process(task) }
                 runningJobs[key] = job
                 job.join()
@@ -80,37 +73,45 @@ class ProcessingQueue(
         }
     }
 
-    fun statusKey(task: Task) = "${task.item.folder}/${task.item.name}"
-
-    /** Queue a scan for digitizing. Ignored if that item is already queued/working. */
-    fun submit(item: ScanItem, mode: ScanMode, feedback: String? = null) {
-        val task = Task(item, mode, feedback)
-        val key = statusKey(task)
-        if (_statuses.value[key]?.status == ScanStatus.Processing ||
-            _statuses.value[key]?.status == ScanStatus.Queued
-        ) return
+    fun submit(page: PageView, mode: ScanMode, feedback: String? = null) {
+        val key = statusKey(page.folder, page.docName, page.spec.index)
+        val cur = _statuses.value[key]?.status
+        if (cur == ScanStatus.Processing || cur == ScanStatus.Queued) return
         setStatus(key, ScanStatus.Queued)
-        scope.launch { queue.trySend(task) }
+        scope.launch {
+            if (queue.trySend(Task(page, mode, feedback)).isFailure) {
+                // channel full/closed — never leave a phantom Queued badge
+                setStatus(key, ScanStatus.Error, "Queue is full — try later")
+            }
+        }
     }
 
-    /** Cancel a queued or running task by scan id. */
-    fun cancel(item: ScanItem) {
-        val key = "${item.folder}/${item.name}"
+    fun submitAll(pages: List<PageView>, mode: ScanMode) =
+        pages.filter { it.htmlUri == null }.forEach { submit(it, mode) }
+
+    fun cancel(folder: String, doc: String, page: Int) {
+        val key = statusKey(folder, doc, page)
         val active = runningJobs.remove(key)
-        if (active != null) {
-            active.cancel()          // interrupts the running task
-            cancelledKeys.remove(key) // it will not be drained as "queued-cancelled"
-        } else {
-            cancelledKeys.add(key)   // worker skips it when the queue drains
-        }
+        if (active != null) { active.cancel(); cancelledKeys.remove(key) }
+        else cancelledKeys.add(key)
         _statuses.value = _statuses.value - key
     }
 
-    fun clearError(item: ScanItem) {
-        val key = "${item.folder}/${item.name}"
-        if (_statuses.value[key]?.status == ScanStatus.Error) {
-            _statuses.value = _statuses.value - key
+    fun cancelDocument(folder: String, doc: String) {
+        _statuses.value.keys.filter { it.startsWith("$folder/$doc#") }.forEach {
+            val page = it.substringAfterLast('#').toIntOrNull() ?: return@forEach
+            cancel(folder, doc, page)
         }
+    }
+
+    fun clearError(folder: String, doc: String, page: Int) {
+        val key = statusKey(folder, doc, page)
+        if (_statuses.value[key]?.status == ScanStatus.Error)
+            _statuses.value = _statuses.value - key
+    }
+
+    fun activeCount(): Int = _statuses.value.values.count {
+        it.status == ScanStatus.Queued || it.status == ScanStatus.Processing
     }
 
     private fun setStatus(key: String, status: ScanStatus, message: String? = null) {
@@ -118,49 +119,58 @@ class ProcessingQueue(
     }
 
     private suspend fun process(task: Task) {
-        val key = statusKey(task)
+        val key = statusKey(task.page.folder, task.page.docName, task.page.spec.index)
         try {
+            // cancel can land after the drain check but before we start
+            if (key in cancelledKeys) return
             val s = settings.settings.value
             val provider = s.providers.find { it.id == s.activeProviderId && it.enabled }
                 ?: s.providers.firstOrNull { it.enabled && it.models.isNotEmpty() }
                 ?: run {
-                    setStatus(key, ScanStatus.Error, "No AI provider configured — open Settings")
+                    setStatus(key, ScanStatus.Error, "No AI provider configured")
                     return
                 }
             val model = s.activeModel?.takeIf { it in provider.models }
                 ?: provider.models.firstOrNull()
                 ?: run {
-                    setStatus(key, ScanStatus.Error, "No model selected for ${provider.name}")
+                    setStatus(key, ScanStatus.Error, "No model selected")
                     return
                 }
 
-            val bitmap = decodeDownsampled(task.item.imageUri)
+            // Render the edited page (crop+rotate+filter), then downsample for transport.
+            val raw = decodeDownsampled(task.page.imageUri)
                 ?: run {
-                    setStatus(key, ScanStatus.Error, "Could not read the captured image")
+                    setStatus(key, ScanStatus.Error, "Could not read the page image")
                     return
                 }
-
+            val rendered = PagePipeline.render(raw, task.page.spec)
+            raw.recycle()
             val prompt = buildPrompt(task.mode, task.feedback)
 
             setStatus(key, ScanStatus.Processing)
             var lastError: AiException? = null
 
-            for (attempt in 1..MAX_ATTEMPTS_PER_TASK) {
+            for (attempt in 1..MAX_ATTEMPTS) {
                 val keyEntry = pickKey(provider.id)
                 if (keyEntry == null) {
-                    lastError = if (settings.settings.value.keys.any { it.providerId == provider.id })
-                        AiException.AllKeysCooling(COOLDOWN_RATE_LIMIT_MS / 1000)
-                    else AiException.NoUsableKeys()
+                    val mine = settings.settings.value.keys.filter { it.providerId == provider.id }
+                    lastError = if (mine.isNotEmpty()) {
+                        val waitSecs = ((mine.maxOf { it.cooldownUntil } - System.currentTimeMillis()) / 1000L)
+                            .coerceAtLeast(1L)
+                        AiException.AllKeysCooling(waitSecs)
+                    } else AiException.NoUsableKeys()
                     break
                 }
                 val outcome = try {
-                    val html = ai.digitize(provider, model, keyEntry, bitmap, prompt)
-                    if (scans.saveHtml(task.item, html)) {
+                    val html = ai.digitize(provider, model, keyEntry, rendered, prompt)
+                    // final cancel gate: don't write results for a cancelled task
+                    if (key in cancelledKeys) throw kotlinx.coroutines.CancellationException("cancelled")
+                    if (docs.savePageHtml(task.page, html)) {
                         markKeySuccess(keyEntry.id)
-                        null // success
+                        null
                     } else AiException.Server(0)
                 } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e // cancelled via cancel() — don't mark error
+                    throw e
                 } catch (e: AiException) {
                     handleKeyFailure(keyEntry.id, e)
                     e
@@ -172,39 +182,37 @@ class ProcessingQueue(
                     return
                 }
                 lastError = outcome
-                // terminal for this task if it's an empty/bad-config result
                 if (outcome is AiException.EmptyResult || outcome is AiException.BadConfig) break
             }
 
-            setStatus(key, ScanStatus.Error, lastError?.message ?: "Processing failed")
+            setStatus(key, ScanStatus.Error, lastError?.message ?: "Digitization failed")
         } finally {
-            // a cancel() that raced task completion must not leave a stale flag
             cancelledKeys.remove(key)
         }
     }
 
-    /** Least-recently-used, skipping cooling-down keys. */
     private fun pickKey(providerId: String): KeyEntry? {
         val now = System.currentTimeMillis()
-        val candidates = settings.settings.value.keys
+        return settings.settings.value.keys
             .filter { it.providerId == providerId && it.cooldownUntil <= now }
             .minByOrNull { it.totalUses }
-        return candidates
     }
 
     private fun markKeySuccess(keyId: String) = settings.update { s ->
-        s.copy(keys = s.keys.map { if (it.id == keyId) it.copy(totalUses = it.totalUses + 1, cooldownUntil = 0L) else it })
+        s.copy(keys = s.keys.map {
+            if (it.id == keyId) it.copy(totalUses = it.totalUses + 1, cooldownUntil = 0L) else it
+        })
     }
 
     private fun handleKeyFailure(keyId: String, e: AiException) = settings.update { s ->
-        val benchMs = when (e) {
+        val bench = when (e) {
             is AiException.RateLimited -> COOLDOWN_RATE_LIMIT_MS
             is AiException.Auth -> COOLDOWN_AUTH_MS
-            else -> 0L // network/server issues are the provider's, not the key's
+            else -> 0L
         }
         s.copy(keys = s.keys.map {
             if (it.id == keyId) it.copy(
-                cooldownUntil = if (benchMs > 0) System.currentTimeMillis() + benchMs else it.cooldownUntil,
+                cooldownUntil = if (bench > 0) System.currentTimeMillis() + bench else it.cooldownUntil,
                 totalUses = it.totalUses + 1,
             ) else it
         })
@@ -213,33 +221,27 @@ class ProcessingQueue(
     private fun buildPrompt(mode: ScanMode, feedback: String?): String {
         val base = settings.promptFor(mode)
         return if (feedback.isNullOrBlank()) base
-        else base + "\n\n## Correction request from the user (previous attempt had these problems):\n" + feedback +
-            "\nFix exactly these issues while keeping every other rule above."
+        else "$base\n\n## Correction request from the user (the previous result had these problems):\n$feedback\nFix exactly these while keeping every other rule."
     }
 
-    /** Decode the saved JPEG already downscaled to ~maxSide — no full-res bitmaps in memory. */
     private suspend fun decodeDownsampled(uriString: String): Bitmap? = withContext(Dispatchers.IO) {
         try {
             val uri = Uri.parse(uriString)
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            context.contentResolver.openInputStream(uri)?.use {
-                BitmapFactory.decodeStream(it, null, bounds)
-            }
+            context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
             if (bounds.outWidth <= 0) return@withContext null
             val opts = BitmapFactory.Options().apply {
-                inSampleSize = computeSampleSize(bounds.outWidth, bounds.outHeight, 1568)
+                inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, 2000)
             }
-            context.contentResolver.openInputStream(uri)?.use {
-                BitmapFactory.decodeStream(it, null, opts)
-            }
+            context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
         } catch (_: Exception) {
             null
         }
     }
 
-    private fun computeSampleSize(w: Int, h: Int, maxSide: Int): Int {
-        var sample = 1
-        while (maxOf(w, h) / (sample * 2) >= maxSide) sample *= 2
-        return sample
+    private fun sampleSize(w: Int, h: Int, maxSide: Int): Int {
+        var s = 1
+        while (maxOf(w, h) / (s * 2) >= maxSide) s *= 2
+        return s
     }
 }

@@ -62,7 +62,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     /** Re-point storage at another folder (permission taken in the repository). */
     fun moveRootFolder(uriString: String) {
         container.settings.persistRootFolder(uriString)
-        viewModelScope.launch { container.scans.ensureRoot() }
+        viewModelScope.launch { container.docs.ensureRoot() }
     }
 
     fun addCustomProvider(name: String, baseUrl: String, models: List<String>) {

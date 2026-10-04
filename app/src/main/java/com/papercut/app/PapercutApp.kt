@@ -2,24 +2,28 @@ package com.papercut.app
 
 import android.app.Application
 import com.papercut.app.core.data.AiClient
+import com.papercut.app.core.data.DocumentRepository
 import com.papercut.app.core.data.HtmlRenderer
-import com.papercut.app.core.data.ScanRepository
 import com.papercut.app.core.data.SecretStore
 import com.papercut.app.core.data.SettingsRepository
+import com.papercut.app.core.design.MessageBus
+import com.papercut.app.core.domain.DraftStore
 import com.papercut.app.core.domain.ProcessingQueue
 
 /**
  * Manual DI: one container built at process start, shared by every ViewModel.
- * Chosen over Hilt deliberately — fewer moving parts, trivially readable, and
- * docs/ARCHITECTURE.md maps it 1:1 (any agent can trace the whole graph here).
+ * No DI framework — the whole object graph is readable in 10 lines here.
  */
 class AppContainer(app: Application) {
     val secrets = SecretStore(app)
     val settings = SettingsRepository(app, secrets)
-    val scans = ScanRepository(app, settings)
+    val docs = DocumentRepository(app, settings)
     val ai = AiClient(secrets)
     val renderer = HtmlRenderer(app)
-    val queue = ProcessingQueue(app, settings, scans, ai)
+    val drafts = DraftStore()
+    val queue = ProcessingQueue(app, settings, docs, ai)
+    val messages = MessageBus()
+    val appContext = app
 }
 
 class PapercutApp : Application() {
@@ -32,6 +36,3 @@ class PapercutApp : Application() {
         container.settings.load()
     }
 }
-
-/** ViewModel factory access: `val vm: XViewModel by viewModel(factory = …)` */
-fun Application.container(): AppContainer = (this as PapercutApp).container

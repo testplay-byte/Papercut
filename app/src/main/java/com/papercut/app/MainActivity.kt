@@ -39,13 +39,20 @@ fun PapercutAppRoot(container: AppContainer) {
     val settings by container.settings.settings.collectAsState()
     val scope = rememberCoroutineScope()
 
-    if (settings.rootFolderUri == null) {
+    // permission can be revoked in system settings — then re-onboard rather
+    // than dead-end every write with silent failures
+    val ready = settings.rootFolderUri != null && container.settings.hasRootAccess()
+
+    if (!ready) {
         WelcomeSetupScreen(onFolderPicked = { uri ->
             // persistRootFolder also takes the PERSISTABLE SAF permission
             container.settings.persistRootFolder(uri)
-            scope.launch { container.scans.ensureRoot() }
+            scope.launch { container.docs.ensureRoot() }
         })
     } else {
-        PapercutNavHost(navController = rememberNavController())
+        PapercutNavHost(
+            navController = rememberNavController(),
+            messages = container.messages,
+        )
     }
 }

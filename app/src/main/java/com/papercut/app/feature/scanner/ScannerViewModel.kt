@@ -4,104 +4,116 @@ import android.graphics.Bitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.papercut.app.AppContainer
-import com.papercut.app.core.data.model.ScanItem
+import com.papercut.app.core.data.model.PageEdits
 import com.papercut.app.core.data.model.ScanMode
-import kotlinx.coroutines.flow.MutableSharedFlow
+import com.papercut.app.core.domain.DraftStore
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 enum class Flash { OFF, ON, AUTO }
 
 /**
- * Scanner state. Deliberately tiny: the camera preview itself is a Compose
- * AndroidView concern; everything that must survive navigation lives here.
+ * Scanner state for one capture session. Pages live in the app-scoped
+ * [DraftStore] so they survive navigation to the crop editor; saving turns
+ * the draft into a Document (new, or appended to an existing one).
  */
 class ScannerViewModel(
     private val container: AppContainer,
     val folderName: String,
+    val appendToDoc: String?,      // null = new document
 ) : ViewModel() {
 
+    val drafts: DraftStore = container.drafts
+    val pages: StateFlow<List<DraftStore.DraftPage>> = drafts.pages
+
     private val _flash = MutableStateFlow(Flash.OFF)
-    val flash: StateFlow<Flash> = _flash
+    val flash: StateFlow<Flash> = _flash.asStateFlow()
 
-    private val _mode = MutableStateFlow(ScanMode.TEXT)
-    val mode: StateFlow<ScanMode> = _mode
+    private val _mode = MutableStateFlow(container.settings.settings.value.defaultScanMode)
+    val mode: StateFlow<ScanMode> = _mode.asStateFlow()
 
-    private val _batch = MutableStateFlow(false)
-    val batchMode: StateFlow<Boolean> = _batch
-
-    private val _batchCount = MutableStateFlow(0)
-    val batchCount: StateFlow<Int> = _batchCount
-
-    /** true while the shutter is locked (capture in flight). */
     private val _capturing = MutableStateFlow(false)
-    val capturing: StateFlow<Boolean> = _capturing
+    val capturing: StateFlow<Boolean> = _capturing.asStateFlow()
 
-    private val _events = MutableSharedFlow<ScanEvent>(extraBufferCapacity = 8)
-    val events: SharedFlow<ScanEvent> = _events.asSharedFlow()
+    private val _saving = MutableStateFlow(false)
+    val saving: StateFlow<Boolean> = _saving.asStateFlow()
 
-    /** Live processing overlay info (single source — no stacked overlays). */
-    val queueStatuses: StateFlow<Map<String, com.papercut.app.core.domain.ProcessingQueue.TaskState>> =
-        container.queue.statuses.stateIn(
-            viewModelScope,
-            SharingStarted.WhileSubscribed(5_000),
-            emptyMap(),
-        )
+    val suggestedName: StateFlow<String> = drafts.name
 
-    sealed interface ScanEvent {
-        data class Saved(val item: ScanItem) : ScanEvent
-        data class Error(val message: String) : ScanEvent
+    init {
+        // claim the folder for a brand-new session (resumed drafts keep theirs)
+        drafts.claimFolder(folderName)
+        // fresh session starts with a name suggestion (existing drafts keep theirs)
+        if (drafts.pages.value.isEmpty() && drafts.name.value.isEmpty()) {
+            drafts.setName(container.docs.suggestName())
+        }
     }
-
-    /** Name of the most recent capture this session (shutter shows a check, gallery opens it). */
-    var lastSavedName: String? = null
-        private set
 
     fun setFlash(f: Flash) { _flash.value = f }
     fun setMode(m: ScanMode) { _mode.value = m }
-    fun setBatch(b: Boolean) {
-        _batch.value = b
-        if (!b) _batchCount.value = 0
-    }
+    fun setName(n: String) { drafts.setName(n) }
 
     fun beginCapture() { _capturing.value = true }
-    fun endCapture() { _capturing.value = false }
-    fun captureFailed(message: String) {
+    fun captureFailed(msg: String) {
         _capturing.value = false
-        _events.tryEmit(ScanEvent.Error(message))
+        container.messages.post(msg)
     }
 
-    fun onCaptureFailed(message: String) = captureFailed(message)
-
-    /** Store a freshly captured bitmap (rotation already applied by CameraX). */
+    /** Persist one upright capture into the draft (carries the session's mode). */
     fun onImageCaptured(bitmap: Bitmap) {
         viewModelScope.launch {
             try {
-                val item = container.scans.saveCapture(folderName, bitmap)
-                if (item == null) {
-                    _events.tryEmit(ScanEvent.Error("Could not save the scan — check storage access in Settings"))
-                    return@launch
-                }
-                bitmap.recycle()
-                lastSavedName = item.name
-                _batchCount.value += 1
-                _events.tryEmit(ScanEvent.Saved(item))
-
-                val settings = container.settings.settings.value
-                if (settings.autoEnhance) {
-                    container.queue.submit(item, _mode.value)
-                }
-            } catch (e: Exception) {
-                _events.tryEmit(ScanEvent.Error(e.message ?: "Capture failed"))
+                drafts.addPage(bitmap, _mode.value)
             } finally {
                 _capturing.value = false
             }
         }
     }
 
+    fun removePage(index: Int) = drafts.removePage(index)
+
+    fun discard() = drafts.clear()
+
+    /**
+     * Save the whole draft: append to [appendToDoc] when set, else create a
+     * new document. Per-page crop/rotation/filter edits are carried along.
+     */
+    fun saveDraft(onDone: (folder: String?, docName: String?, ok: Boolean) -> Unit) {
+        val current = drafts.pages.value
+        if (current.isEmpty()) { onDone(null, null, false); return }
+        _saving.value = true
+        // draft owns its folder (resume may come from a different scope)
+        val targetFolder = drafts.folder.value ?: folderName
+        viewModelScope.launch {
+            val bits = current.map { it.bitmap }
+            val edits = current.map { PageEdits(it.quad, it.rotation, it.filter, it.mode) }
+            val name = drafts.name.value.ifBlank { container.docs.suggestName() }
+            val result: String? = if (appendToDoc != null) {
+                if (container.docs.addPages(targetFolder, appendToDoc, bits, edits)) appendToDoc else null
+            } else {
+                container.docs.createDocument(targetFolder, bits, name, edits)?.second
+            }
+            if (result != null) {
+                val count = current.size
+                drafts.clear() // recycles bitmaps AFTER successful write
+                container.messages.post(if (appendToDoc != null) "Added $count pages" else "Saved “$result”")
+                // honor the Auto-digitize switch: queue new pages with their
+                // own Text/Notes mode (the scanner pill now means something)
+                if (container.settings.settings.value.autoEnhance) {
+                    val summary = container.docs.listDocuments(targetFolder).find { it.name == result }
+                    if (summary != null) {
+                        container.docs.getPages(summary)
+                            .filter { it.htmlUri == null }
+                            .forEach { p -> container.queue.submit(p, p.spec.aiMode) }
+                    }
+                }
+            } else {
+                container.messages.post("Could not save — check storage access in Settings")
+            }
+            _saving.value = false
+            onDone(targetFolder, result, result != null)
+        }
+    }
 }

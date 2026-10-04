@@ -21,7 +21,7 @@ object PaperColors {
     // Ink (text & icons) — light on dark
     val Ink = Color(0xFFF2F2F5)           // primary text
     val InkSecondary = Color(0xFF9D9DA6)  // labels, captions
-    val InkFaint = Color(0xFF5C5C66)      // disabled, hints
+    val InkFaint = Color(0xFF8B8B97)      // disabled, hints — ≥4.5:1 on Canvas
 
     // Vivid accent (orange "cut" mark — matches the launcher icon)
     val Accent = Color(0xFFFF5A2E)

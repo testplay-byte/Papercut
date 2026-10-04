@@ -67,6 +67,7 @@ fun ProviderScreen(providerId: String, onBack: () -> Unit) {
     val active by settings.settings.collectAsState()
 
     var showAddKey by remember { mutableStateOf(false) }
+    var confirmDeleteProvider by remember { mutableStateOf(false) }
 
     val p = provider ?: run {
         // deleted while open
@@ -114,7 +115,7 @@ fun ProviderScreen(providerId: String, onBack: () -> Unit) {
                     StatCaption("Model — tap to select")
                     Column(modifier = Modifier.padding(top = PaperGap.s), verticalArrangement = Arrangement.spacedBy(PaperGap.xs)) {
                         if (p.models.isEmpty()) {
-                            StatCaption("no models defined — edit below")
+                            StatCaption("no models — add them via + Add / manage providers")
                         }
                         p.models.forEach { model ->
                             val isActive = p.id == active.activeProviderId && model == active.activeModel
@@ -171,7 +172,7 @@ fun ProviderScreen(providerId: String, onBack: () -> Unit) {
                             .fillMaxWidth()
                             .pressScale(delInter)
                             .background(PaperColors.AccentSoft, RoundedCornerShape(PaperRadii.tile))
-                            .tap(delInter) { vm.deleteProvider(); onBack() }
+                            .tap(delInter) { confirmDeleteProvider = true }
                             .padding(PaperGap.m),
                         horizontalArrangement = Arrangement.Center,
                     ) {
@@ -180,6 +181,16 @@ fun ProviderScreen(providerId: String, onBack: () -> Unit) {
                 }
             }
         }
+    }
+
+    if (confirmDeleteProvider) {
+        com.papercut.app.core.design.ConfirmSheet(
+            title = "Delete “${p.name}”?",
+            message = "Its ${keys.size} stored key(s) are erased from encrypted storage.",
+            confirmLabel = "Delete",
+            onConfirm = { vm.deleteProvider(); onBack() },
+            onDismiss = { confirmDeleteProvider = false },
+        )
     }
 
     if (showAddKey) {
@@ -217,7 +228,7 @@ fun ProviderScreen(providerId: String, onBack: () -> Unit) {
 private fun KeyTile(entry: KeyEntry, masked: String, cooldownLeftMs: Long, onRemove: () -> Unit) {
     val cooling = cooldownLeftMs > 0
     val state = when {
-        cooling -> "benched ${cooldownLeftMs / 1000}s"
+        cooling -> "cooling — retry in ${(cooldownLeftMs + 999) / 1000}s"
         entry.totalUses > 0 -> "used ${entry.totalUses}×"
         else -> "unused"
     }
