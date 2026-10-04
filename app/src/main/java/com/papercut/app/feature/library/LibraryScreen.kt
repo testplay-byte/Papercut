@@ -117,19 +117,32 @@ fun LibraryScreen(
                     contentAlignment = Alignment.Center,
                 ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = PaperColors.Ink, modifier = Modifier.size(18.dp)) }
             }
-            androidx.compose.foundation.Image(
-                painter = androidx.compose.ui.res.painterResource(com.papercut.app.R.drawable.ic_papercut_mark),
-                contentDescription = null,
-                modifier = Modifier.size(30.dp),
-            )
-            Text(
-                scope ?: "Papercut",
-                style = MaterialTheme.typography.titleLarge,
-                color = PaperColors.Ink,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                modifier = Modifier.weight(1f),
-            )
+            if (scope == null) {
+                // home: wordmark + tagline reads like an app, not a file manager
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Papercut",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = PaperColors.Ink,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        "${docs.size} document${if (docs.size == 1) "" else "s"}${
+                            if (folders.size > 1) " · ${folders.size} folders" else ""
+                        }",
+                        fontSize = 12.sp, color = PaperColors.InkSecondary,
+                    )
+                }
+            } else {
+                Text(
+                    scope,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = PaperColors.Ink,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f),
+                )
+            }
             if (queueActive > 0) {
                 Text(
                     "$queueActive working",
@@ -554,18 +567,23 @@ private fun DocTile(
             } else letter()
         }
 
-        // bottom label strip
+        // bottom caption floats over the cover instead of a solid strip that
+        // hid the artwork
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
-                .background(PaperColors.Tile.copy(alpha = 0.92f))
-                .padding(horizontal = 12.dp, vertical = 9.dp),
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)),
+                    ),
+                )
+                .padding(horizontal = 12.dp, vertical = 10.dp),
         ) {
-            Text(doc.name, style = MaterialTheme.typography.titleMedium, color = PaperColors.Ink,
+            Text(doc.name, style = MaterialTheme.typography.titleMedium, color = Color.White,
                 maxLines = 1, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("${doc.pageCount}p", color = PaperColors.InkSecondary,
+                Text("${doc.pageCount}p", color = Color.White.copy(alpha = 0.8f),
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontFeatureSettings = "tnum"))
                 if (doc.digitizedPages > 0) {
                     Text("${doc.digitizedPages}✓", fontSize = 11.sp, color = PaperColors.Success,

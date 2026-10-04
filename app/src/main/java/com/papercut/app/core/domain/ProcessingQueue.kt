@@ -174,7 +174,10 @@ class ProcessingQueue(
                     lastError = if (mine.isEmpty()) {
                         AiException.NoUsableKeys()
                     } else if (mine.all { it.lastFailure == AiException.TAG_AUTH }) {
-                        AiException.AllKeysCooling(-1) // rejected — replace them
+                        // say WHY the last attempt failed, not a blanket "rejected":
+                        // a 401 from a wrong URL or missing model reads like a key
+                        // problem when it isn't — the real error is below it
+                        AiException.AllKeysCooling(-1, cause = lastError)
                     } else {
                         val waitSecs = ((mine.maxOf { it.cooldownUntil } - System.currentTimeMillis()) / 1000L)
                             .coerceAtLeast(1L)
@@ -207,9 +210,15 @@ class ProcessingQueue(
                     return
                 }
                 lastError = outcome
-                // terminal for this task
+                // terminal for this task — retrying cannot fix these.
+                // Server: only 4xx is terminal (bad request shape); 5xx and the
+                // code-unknown error-body case are transient and retry.
+                // Auth is NOT terminal: rotate to the next key and keep trying —
+                // only when NO usable key remains does the AllKeysCooling branch
+                // end the task with the full diagnosis.
                 if (outcome is AiException.EmptyResult || outcome is AiException.BadConfig ||
-                    outcome is AiException.StorageFailed || outcome is AiException.Auth
+                    outcome is AiException.StorageFailed || outcome is AiException.NotFound ||
+                    (outcome is AiException.Server && outcome.status in 400..499)
                 ) break
             }
 

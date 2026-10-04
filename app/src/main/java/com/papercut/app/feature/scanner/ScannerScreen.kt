@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -197,7 +198,7 @@ fun ScannerScreen(
         }
 
         AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
-        ViewfinderOverlay()
+        ViewfinderOverlay(capturing = capturing)
 
         // ---- top row: close | mode pill | flash ----
         Row(
@@ -349,16 +350,30 @@ fun ScannerScreen(
                     }
                 },
                 confirmButton = {
-                    TextButton(
-                        onClick = {
-                            vm.setName(docName)
-                            vm.saveDraft { savedFolder, savedName, ok ->
-                                if (ok && savedName != null) onSaved(savedFolder ?: folderName, savedName)
-                                else showSaveSheet = false
+                    // solid accent pill reads as THE action; a plain text button
+                    // next to "Keep scanning" gave the two equal weight
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(PaperRadii.pill))
+                            .background(
+                                if (!saving && pages.isNotEmpty()) PaperColors.Accent else PaperColors.TileSunken,
+                            )
+                            .clickable(enabled = !saving && pages.isNotEmpty()) {
+                                vm.setName(docName)
+                                vm.saveDraft { savedFolder, savedName, ok ->
+                                    if (ok && savedName != null) onSaved(savedFolder ?: folderName, savedName)
+                                    else showSaveSheet = false
+                                }
                             }
-                        },
-                        enabled = !saving && pages.isNotEmpty(),
-                    ) { Text(if (saving) "Saving…" else if (appendToDoc != null) "Add pages" else "Save") }
+                            .padding(horizontal = 18.dp, vertical = 9.dp),
+                    ) {
+                        Text(
+                            if (saving) "Saving..." else if (appendToDoc != null) "Add pages" else "Save",
+                            color = if (!saving && pages.isNotEmpty()) PaperColors.Canvas else PaperColors.InkFaint,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp,
+                        )
+                    }
                 },
                 dismissButton = {
                     TextButton(onClick = { showSaveSheet = false }, enabled = !saving) { Text("Keep scanning") }
@@ -539,22 +554,36 @@ private fun sampleSizeFor(w: Int, h: Int, maxSide: Int): Int {
     return sample
 }
 
-/** Rule-of-thirds grid + corner brackets — pure Canvas, night chrome. */
+/** Rule-of-thirds grid + corner brackets — pure Canvas, night chrome.
+ *  The brackets breathe on capture so the shutter press reads clearly. */
 @Composable
-private fun ViewfinderOverlay() {
+private fun ViewfinderOverlay(capturing: Boolean = false) {
+    // animate once per capture: brackets pulse accent then settle back
+    val pulse = remember { androidx.compose.animation.core.Animatable(0f) }
+    androidx.compose.runtime.LaunchedEffect(capturing) {
+        if (capturing) {
+            pulse.snapTo(1f)
+            pulse.animateTo(0f, androidx.compose.animation.core.tween(450))
+        }
+    }
+    val bracketColor = androidx.compose.ui.graphics.lerp(
+        Color.White.copy(alpha = 0.8f),
+        PaperColors.Accent,
+        pulse.value,
+    )
     Canvas(modifier = Modifier.fillMaxSize()) {
         val w = size.width
         val h = size.height
         // dp-scaled strokes — raw px rendered as a hairline on high-density phones
         val gridW = 1.2.dp.toPx()
-        val bracketW = 3.5.dp.toPx()
-        val len = 44.dp.toPx()
+        val bracketW = 3.5.dp.toPx() + 2.dp.toPx() * pulse.value
+        val len = 44.dp.toPx() + 8.dp.toPx() * pulse.value
         val grid = Color.White.copy(alpha = 0.18f)
         for (i in 1..2) {
             drawLine(grid, Offset(w * i / 3f, h * 0.16f), Offset(w * i / 3f, h * 0.84f), gridW)
             drawLine(grid, Offset(w * 0.08f, h * i / 3f), Offset(w * 0.92f, h * i / 3f), gridW)
         }
-        val bracket = Color.White.copy(alpha = 0.8f)
+        val bracket = bracketColor
         val insetX = w * 0.08f
         val insetY = h * 0.17f
         listOf(

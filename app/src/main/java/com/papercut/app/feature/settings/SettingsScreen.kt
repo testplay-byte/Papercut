@@ -18,8 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Tune
@@ -102,9 +101,19 @@ fun SettingsScreen(
             }
         }
 
-        // AI providers tile-grid: one tile per enabled provider
+        // AI setup section first — it's the only thing most users come here for
         item {
-            SectionTitle(Icons.Filled.Key, "AI providers")
+            SectionTitle(Icons.Filled.Key, "AI provider")
+            // the active provider+model deserves its own summary line: after it,
+            // the list is just "other providers you can switch to"
+            val activeRow = rows.find { it.isActive && it.provider.enabled }
+            activeRow?.let { row ->
+                Text(
+                    "Scanning with ${row.provider.name} · ${settings.activeModel ?: "no model picked"}",
+                    fontSize = 13.sp, color = PaperColors.InkSecondary,
+                    modifier = Modifier.padding(start = 26.dp, top = 4.dp),
+                )
+            }
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(PaperGap.s)) {
@@ -125,9 +134,10 @@ fun SettingsScreen(
                                 StatCaption(
                                     when {
                                         !on -> "disabled"
-                                        row.provider.requiresKey.not() -> "no key needed · edit URL"
-                                        row.keyCount == 0 -> "no keys yet"
-                                        else -> "${row.keyCount} key(s) · ${row.maskedSample ?: ""}"
+                                        row.isActive && on -> settings.activeModel ?: row.provider.models.firstOrNull() ?: "no model — tap to add"
+                                        row.provider.requiresKey.not() -> "local · no key needed"
+                                        row.keyCount == 0 -> "no key yet — tap to add"
+                                        else -> "${row.keyCount} key(s)"
                                     }
                                 )
                             }
@@ -157,37 +167,34 @@ fun SettingsScreen(
                         .padding(PaperGap.m),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text("＋ Add / manage providers", color = PaperColors.InkSecondary, fontSize = 14.sp)
+                    Text("+ New provider", color = PaperColors.InkSecondary, fontSize = 14.sp)
                 }
             }
         }
 
-        // Prompts tile
+        // Scanning section: prompts + behavior live together — they all shape
+        // what happens when the shutter fires
         item {
-            SectionTitle(Icons.Filled.Tune, "Prompts")
+            SectionTitle(Icons.Filled.Tune, "Scanning")
         }
         item {
             BentoTile(onClick = onOpenPrompts, modifier = Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PaperGap.m)) {
                     Icon(Icons.Filled.Tune, null, tint = PaperColors.Accent, modifier = Modifier.size(26.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Scan prompts", style = MaterialTheme.typography.titleMedium, color = PaperColors.Ink)
-                        StatCaption("Text & Notes")
+                        Text("AI prompts", style = MaterialTheme.typography.titleMedium, color = PaperColors.Ink)
+                        StatCaption("Text & Notes instructions sent to the model")
                     }
+                    Icon(Icons.AutoMirrored.Filled.ArrowForwardIos, null, tint = PaperColors.InkFaint, modifier = Modifier.size(14.dp))
                 }
             }
-        }
-
-        // Behavior switches
-        item {
-            SectionTitle(Icons.Filled.Bolt, "Behavior")
         }
         item {
             BentoTile(modifier = Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Auto-digitize after scan", style = MaterialTheme.typography.titleMedium, color = PaperColors.Ink)
-                        StatCaption("Digitize right after capture")
+                        StatCaption("Queue the AI twin right after saving")
                     }
                     SmoothSwitch(checked = settings.autoEnhance, onCheckedChange = { vm.setAutoEnhance(it) })
                 }
@@ -197,7 +204,7 @@ fun SettingsScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Default mode", style = MaterialTheme.typography.titleMedium, color = PaperColors.Ink)
-                        StatCaption("In the scanner")
+                        StatCaption("Starting pill in the scanner")
                     }
                     com.papercut.app.core.design.SegmentedPill(
                         options = listOf(ScanMode.TEXT to "Text", ScanMode.NOTES to "Notes"),

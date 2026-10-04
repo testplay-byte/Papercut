@@ -77,11 +77,21 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch { container.docs.ensureRoot() }
     }
 
-    fun addCustomProvider(name: String, baseUrl: String, models: List<String>) {
+    /** Creates a provider and optionally stores its first API key in one step —
+     *  the create form asks for the key inline so a provider is usable the
+     *  moment it's created. */
+    fun addCustomProvider(name: String, baseUrl: String, models: List<String>, apiKey: String? = null) {
         val id = "custom-" + java.util.UUID.randomUUID().toString().take(8)
         container.settings.upsertProvider(
             AiProvider(id = id, name = name, baseUrl = baseUrl, models = models, isBuiltIn = false),
         )
+        if (!apiKey.isNullOrBlank()) container.settings.addKey(id, "Key 1", apiKey.trim())
+        // a brand-new provider is immediately the active one — creating it and
+        // then hunting through the list to select it was two avoidable steps
+        val firstModel = models.firstOrNull()
+        if (firstModel != null) {
+            container.settings.update { it.copy(activeProviderId = id, activeModel = firstModel) }
+        }
     }
 }
 

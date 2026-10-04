@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -145,7 +146,6 @@ fun ProviderScreen(providerId: String, onBack: () -> Unit) {
                     if (editing) {
                         var name by remember(p.id) { mutableStateOf(p.name) }
                         var url by remember(p.id) { mutableStateOf(p.baseUrl) }
-                        var models by remember(p.id) { mutableStateOf(p.models.joinToString(", ")) }
                         Column(
                             modifier = Modifier.padding(top = PaperGap.s),
                             verticalArrangement = Arrangement.spacedBy(PaperGap.s),
@@ -158,16 +158,10 @@ fun ProviderScreen(providerId: String, onBack: () -> Unit) {
                             OutlinedTextField(
                                 value = url, onValueChange = { url = it },
                                 label = { Text("Base URL") }, singleLine = true,
-                                placeholder = { Text("http://192.168.1.2:11434/v1") },
+                                placeholder = { Text("https://api.example.com/v1") },
                                 modifier = Modifier.fillMaxWidth(),
                             )
-                            OutlinedTextField(
-                                value = models, onValueChange = { models = it },
-                                label = { Text("Models") },
-                                placeholder = { Text("llama3.2-vision:11b, qwen2.5vl") },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(PaperGap.s)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(PaperGap.s), verticalAlignment = Alignment.CenterVertically) {
                                 val saveInter = remember { MutableInteractionSource() }
                                 Box(
                                     modifier = Modifier
@@ -181,7 +175,7 @@ fun ProviderScreen(providerId: String, onBack: () -> Unit) {
                                                 vm.saveProvider(
                                                     name.trim().ifBlank { p.name },
                                                     url.trim().trimEnd('/'),
-                                                    models.split(',').map { it.trim() }.filter { it.isNotEmpty() },
+                                                    p.models, // models are managed in their own tile below
                                                 )
                                                 editing = false
                                             } else Modifier
@@ -205,13 +199,19 @@ fun ProviderScreen(providerId: String, onBack: () -> Unit) {
             }
 
             item {
-                // model picker
+                // models tile — each model is a removable chip, plus an inline
+                // add field; editing a comma string in a hidden editor was the
+                // complaint, so the list itself IS the editor
+                var newModel by remember(p.id) { mutableStateOf("") }
                 BentoTile(modifier = Modifier.fillMaxWidth()) {
-                    StatCaption("Model — tap to select")
-                    Column(modifier = Modifier.padding(top = PaperGap.s), verticalArrangement = Arrangement.spacedBy(PaperGap.xs)) {
-                        if (p.models.isEmpty()) {
-                            StatCaption("add models in Connection above")
-                        }
+                    StatCaption("Models — tap one to scan with it")
+                    if (p.models.isEmpty()) {
+                        StatCaption("add at least one model below")
+                    }
+                    Column(
+                        modifier = Modifier.padding(top = PaperGap.s),
+                        verticalArrangement = Arrangement.spacedBy(PaperGap.xs),
+                    ) {
                         p.models.forEach { model ->
                             val isActive = p.id == active.activeProviderId && model == active.activeModel
                             val inter = remember { MutableInteractionSource() }
@@ -224,12 +224,67 @@ fun ProviderScreen(providerId: String, onBack: () -> Unit) {
                                         RoundedCornerShape(PaperRadii.small),
                                     )
                                     .tap(inter) { vm.selectModel(model) }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    .padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text(model, color = if (isActive) PaperColors.Accent else PaperColors.Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                Text(
+                                    model,
+                                    color = if (isActive) PaperColors.Accent else PaperColors.Ink,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                )
+                                if (isActive) {
+                                    Text("ACTIVE", color = PaperColors.Accent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                                val rmInter = remember { MutableInteractionSource() }
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(RoundedCornerShape(PaperRadii.pill))
+                                        .tap(rmInter) {
+                                            val remaining = p.models - model
+                                            vm.saveProvider(p.name, p.baseUrl, remaining)
+                                        },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Close, "Remove $model",
+                                        tint = PaperColors.InkFaint, modifier = Modifier.size(14.dp),
+                                    )
+                                }
                             }
                         }
+                        // inline add-model field
+                        OutlinedTextField(
+                            value = newModel,
+                            onValueChange = { newModel = it },
+                            label = { Text("Add model") },
+                            placeholder = { Text("model id — e.g. gemini-2.5-flash") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = {
+                                if (newModel.isNotBlank()) {
+                                    val addInter = remember { MutableInteractionSource() }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(PaperRadii.pill))
+                                            .background(PaperColors.AccentSoft)
+                                            .tap(addInter) {
+                                                val m = newModel.trim()
+                                                if (m.isNotEmpty() && m !in p.models) {
+                                                    vm.saveProvider(p.name, p.baseUrl, p.models + m)
+                                                }
+                                                newModel = ""
+                                            }
+                                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    ) {
+                                        Text("Add", color = PaperColors.Accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+                            },
+                        )
                     }
                 }
             }
@@ -351,13 +406,18 @@ private fun KeyTile(entry: KeyEntry, masked: String, cooldownLeftMs: Long, onRem
     }
 }
 
-/** Create-custom-provider form: name, base URL, models (comma-separated). */
+/** Create-custom-provider form: name, base URL, models, and the first API key
+ *  in one step — a provider is usable the moment it's created. */
 @Composable
 private fun NewProviderScreen(onBack: () -> Unit) {
     val settings: SettingsViewModel = appViewModel { c -> SettingsViewModel(c) }
     var name by remember { mutableStateOf("") }
     var baseUrl by remember { mutableStateOf("") }
     var models by remember { mutableStateOf("") }
+    var apiKey by remember { mutableStateOf("") }
+    var localServer by remember { mutableStateOf(false) }
+
+    fun valid() = name.isNotBlank() && baseUrl.startsWith("http")
 
     Column(
         modifier = Modifier
@@ -377,31 +437,77 @@ private fun NewProviderScreen(onBack: () -> Unit) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = PaperColors.Ink,
                 modifier = Modifier.size(18.dp))
         }
-        StatCaption("Add a custom provider (any OpenAI-compatible server)")
-        OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name — e.g. My VPS") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it }, label = { Text("Base URL") }, placeholder = { Text("http://192.168.1.20:11434/v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = models, onValueChange = { models = it }, label = { Text("Models, comma separated") }, modifier = Modifier.fillMaxWidth())
         Text(
-            "Papercut calls <base URL>/chat/completions with vision content parts — works with OpenRouter, Together, DeepSeek, Ollama, LM Studio and similar.",
+            "New provider",
+            style = MaterialTheme.typography.titleLarge,
+            color = PaperColors.Ink,
+            fontWeight = FontWeight.Bold,
+        )
+        StatCaption("Any OpenAI-compatible server — OpenRouter, Groq, Ollama, LM Studio…")
+
+        OutlinedTextField(
+            value = name, onValueChange = { name = it },
+            label = { Text("Name") },
+            placeholder = { Text("e.g. OpenRouter") },
+            singleLine = true, modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = baseUrl, onValueChange = { baseUrl = it },
+            label = { Text("Base URL") },
+            placeholder = { Text("https://openrouter.ai/api/v1") },
+            singleLine = true, modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = models, onValueChange = { models = it },
+            label = { Text("Models") },
+            placeholder = { Text("model-id-1, model-id-2") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Local server (no API key)", color = PaperColors.Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                StatCaption("Ollama, LM Studio and friends")
+            }
+            com.papercut.app.core.design.SmoothSwitch(checked = localServer, onCheckedChange = { localServer = it })
+        }
+        if (localServer) {
+            StatCaption("Keys stay empty — Papercut calls the server without Authorization.")
+        } else {
+            OutlinedTextField(
+                value = apiKey, onValueChange = { apiKey = it },
+                label = { Text("API key") },
+                placeholder = { Text("sk-… (paste here)") },
+                singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            StatCaption("Stored encrypted on this device — never written to your scan folder.")
+        }
+
+        Text(
+            "Papercut calls <base URL>/chat/completions with vision content parts.",
             fontSize = 12.sp,
             color = PaperColors.InkSecondary,
         )
+
         val saveInter = remember { MutableInteractionSource() }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .pressScale(saveInter, pressedScale = 0.97f)
                 .background(
-                    if (name.isNotBlank() && baseUrl.length > 8) PaperColors.Accent else PaperColors.InkFaint,
+                    if (valid()) PaperColors.Accent else PaperColors.TileSunken,
                     RoundedCornerShape(PaperRadii.pill),
                 )
                 .then(
-                    if (name.isNotBlank() && baseUrl.length > 8)
+                    if (valid())
                         Modifier.tap(saveInter) {
                             settings.addCustomProvider(
                                 name.trim(),
-                                baseUrl.trim(),
+                                baseUrl.trim().trimEnd('/'),
                                 models.split(',').map { it.trim() }.filter { it.isNotEmpty() },
+                                if (localServer) null else apiKey,
                             )
                             onBack()
                         }
@@ -410,7 +516,11 @@ private fun NewProviderScreen(onBack: () -> Unit) {
                 .padding(vertical = 14.dp),
             horizontalArrangement = Arrangement.Center,
         ) {
-            Text("Create provider", color = androidx.compose.ui.graphics.Color.White, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Create provider",
+                color = if (valid()) PaperColors.Canvas else PaperColors.InkFaint,
+                fontWeight = FontWeight.SemiBold,
+            )
         }
     }
 }

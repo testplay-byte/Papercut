@@ -47,11 +47,17 @@ sealed class AiException(message: String) : Exception(message) {
 
     class NoProviderConfigured : AiException("No AI provider configured — open Settings")
     class NoUsableKeys : AiException("Add an API key for this provider in Settings")
-    /** retryInSecs > 0: cooling down. -1: every key was REJECTED — replace them. */
-    class AllKeysCooling(val retryInSecs: Long) :
+    /** retryInSecs > 0: cooling down. -1: every key was REJECTED — replace them.
+     *  [cause] is the failure that benched the last key — surfaced so a wrong
+     *  URL/model (which also returns 401/403 on some gateways) isn't misread
+     *  as "your key is bad". */
+    class AllKeysCooling(val retryInSecs: Long, cause: AiException? = null) :
         AiException(
-            if (retryInSecs > 0) "Every key is cooling down — retry in ${retryInSecs}s"
-            else "All keys were rejected (401) — check them in Settings",
+            when {
+                retryInSecs > 0 -> "Every key is cooling down — retry in ${retryInSecs}s"
+                cause != null -> "Key was set aside after: ${cause.message}"
+                else -> "All keys were rejected — check them in Settings"
+            },
         )
     class Auth : AiException("Provider rejected the API key (401) — add a valid key") {
         override val tag: String get() = TAG_AUTH
@@ -59,8 +65,20 @@ sealed class AiException(message: String) : Exception(message) {
     class RateLimited : AiException("Rate limited by provider (429) — will retry") {
         override val tag: String get() = "rate-limited"
     }
+    /** 404: wrong base URL or model name — NOT a key problem, never bench a key. */
+    class NotFound(val status: Int, detail: String? = null) :
+        AiException(
+            if (detail != null) "Not found: $detail — check the Base URL and model name in Settings"
+            else "Not found (HTTP $status) — check the Base URL and model name in Settings",
+        )
     class Server(val status: Int, detail: String? = null) :
-        AiException(if (detail != null) "Provider: $detail" else "Provider error (HTTP $status)")
+        AiException(
+            when {
+                detail != null -> "Provider: $detail"
+                status == 0 -> "Provider returned an error — check its status/dashboard"
+                else -> "Provider error (HTTP $status)"
+            },
+        )
     class Timeout(val host: String) : AiException("Timed out talking to $host — try again or raise the timeout")
     class Network(val host: String) : AiException("Can't reach $host — check the provider URL")
     class EmptyResult : AiException("Model returned no content")
@@ -176,6 +194,7 @@ class AiClient(private val secrets: SecretStore) {
             throw when (status) {
                 401, 403 -> AiException.Auth()
                 429 -> AiException.RateLimited()
+                404 -> AiException.NotFound(status)
                 else -> AiException.Server(status)
             }
         }
@@ -193,8 +212,14 @@ class AiClient(private val secrets: SecretStore) {
             val eo = err as? JsonObject
             val code = (eo?.get("code") as? JsonPrimitive)?.intOrNull ?: 0
             val msg = (eo?.get("message") as? JsonPrimitive)?.contentOrNull
-            throw if (code == 401 || code == 403) AiException.Auth()
-            else AiException.Server(code, msg)
+            throw when {
+                code == 401 || code == 403 -> AiException.Auth()
+                code == 404 -> AiException.NotFound(code, msg)
+                code != 0 -> AiException.Server(code, msg)
+                // no numeric code — surface the provider's own words
+                msg != null -> AiException.Server(0, msg)
+                else -> AiException.Server(0)
+            }
         }
 
         val choices = ((root as? JsonObject)?.get("choices") as? JsonArray)
