@@ -22,7 +22,10 @@ class MessageBus {
         data class WithAction(val text: String, val action: String, val id: Int) : Msg
     }
 
-    private val _flow = MutableSharedFlow<Msg>(extraBufferCapacity = 4)
+    private val _flow = MutableSharedFlow<Msg>(
+        extraBufferCapacity = 16,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
     val flow: SharedFlow<Msg> = _flow.asSharedFlow()
 
     private val pendingActions = HashMap<Int, () -> Unit>()
@@ -53,9 +56,10 @@ fun rememberMessageCollector(bus: MessageBus, host: SnackbarHostState, scope: Co
                     val result = host.showSnackbar(
                         msg.text, msg.action, duration = SnackbarDuration.Long,
                     )
-                    if (result == SnackbarResult.ActionPerformed) {
-                        bus.consumeAction(msg.id)?.invoke()
-                    }
+                    // ALWAYS drop the callback — a dismissed action held a
+                    // full-resolution bitmap in the map forever
+                    val action = bus.consumeAction(msg.id)
+                    if (result == SnackbarResult.ActionPerformed) action?.invoke()
                 }
             }
         }

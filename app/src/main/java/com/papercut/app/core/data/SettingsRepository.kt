@@ -139,8 +139,17 @@ class SettingsRepository(
         // keep built-ins up to date (model lists drift), preserve user custom providers
         // refresh built-ins from code (model lists drift), but keep the user's
         // enable state and any custom providers they added
+        // preserve EVERY user edit to a built-in (the Ollama/LAN base URL, custom
+        // models, keyless flag) — code presets only fill in untouched fields
         val merged = builtIns.map { bi ->
-            providers.find { it.id == bi.id }?.let { bi.copy(enabled = it.enabled) } ?: bi
+            providers.find { it.id == bi.id }?.let { old ->
+                bi.copy(
+                    enabled = old.enabled,
+                    baseUrl = old.baseUrl,
+                    models = if (old.models.isNotEmpty()) old.models else bi.models,
+                    requiresKey = old.requiresKey,
+                )
+            } ?: bi
         } + providers.filter { p -> !p.isBuiltIn }
         val defaultsMissing = ScanMode.entries.any { prompts[it.name].isNullOrBlank() }
         return copy(
@@ -189,15 +198,16 @@ class SettingsRepository(
         )
     }
 
-    fun removeProvider(id: String) = update { current ->
-        val removedKeys = current.keys.filter { it.providerId == id }.map { it.id }
+    fun removeProvider(id: String) {
+        // Keystore I/O is blocking binder work: keep it OUT of updateLock
+        val removedKeys = _settings.value.keys.filter { it.providerId == id }.map { it.id }
         if (removedKeys.isNotEmpty()) secrets.deleteKeys(removedKeys)
-        current.copy(
+        update { current -> current.copy(
             providers = current.providers.filterNot { it.id == id },
             keys = current.keys.filterNot { it.providerId == id },
             activeProviderId = if (current.activeProviderId == id) null else current.activeProviderId,
             activeModel = if (current.activeProviderId == id) null else current.activeModel,
-        )
+        ) }
     }
 
     fun addKey(providerId: String, label: String, secret: String): KeyEntry {

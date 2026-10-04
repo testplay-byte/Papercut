@@ -113,7 +113,7 @@ fun EditorScreen(draftIndex: Int, onBack: () -> Unit) {
                     .padding(horizontal = 13.dp, vertical = 8.dp),
             ) {
                 Text(if (previewMode) "Original" else "Preview",
-                    color = if (previewMode) Color.White else PaperColors.NightInkSecondary,
+                    color = if (previewMode) PaperColors.Canvas else PaperColors.NightInkSecondary,
                     fontSize = 13.sp, fontWeight = FontWeight.Medium)
             }
 

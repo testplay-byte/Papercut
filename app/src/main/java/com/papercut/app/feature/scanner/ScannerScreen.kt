@@ -116,13 +116,15 @@ fun ScannerScreen(
             // accompanist's PermissionStatus has no shouldShowRationale; track
             // "we asked and they said no" ourselves so the nudge can offer
             // App Settings once the system stops showing the dialog.
+            // this block only composes while DENIED, so tracking the grant
+            // here never fired — track the request instead
             var askedOnce by rememberSaveable { mutableStateOf(false) }
-            LaunchedEffect(cameraPermission.status.isGranted) {
-                if (cameraPermission.status.isGranted) askedOnce = true
-            }
             PermissionNudge(
                 permanentlyDenied = askedOnce,
-                onAllow = { cameraPermission.launchPermissionRequest() },
+                onAllow = {
+                    askedOnce = true
+                    cameraPermission.launchPermissionRequest()
+                },
                 onOpenSettings = {
                     context.startActivity(android.content.Intent(
                         android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,

@@ -117,13 +117,27 @@ fun DocumentScreen(
     // twin-ready moment: flip to the digital view once per completed digitize.
     // Page indexes shift on delete/reorder -> prune so shifted pages can flip too.
     val flippedFor = remember { mutableStateOf(setOf<Int>()) }
-    LaunchedEffect(pages.size, selected) { flippedFor.value = flippedFor.value.intersect(pages.indices.toSet()) }
-    LaunchedEffect(statusMap, page?.spec?.index) {
+    LaunchedEffect(pages) {
+        flippedFor.value = flippedFor.value.intersect(pages.map { it.spec.index }.toSet())
+    }
+    // flip only on the working->done TRANSITION of the page on screen, so an
+    // unrelated page finishing never yanks the user off their page
+    var prevStatus by remember { mutableStateOf(ScanStatus.Plain) }
+    LaunchedEffect(status) {
+        val wasBusy = prevStatus == ScanStatus.Queued || prevStatus == ScanStatus.Processing
+        prevStatus = status
         val p = page ?: return@LaunchedEffect
-        if (status == ScanStatus.Done && p.spec.index !in flippedFor.value) {
+        if (wasBusy && status == ScanStatus.Done && p.spec.index !in flippedFor.value) {
             flippedFor.value = flippedFor.value + p.spec.index
             vm.showHtml(p, backup = false)
             mode = ViewMode.HTML
+        }
+    }
+
+    // the twin pane must follow the page: re-request on page/mode change
+    LaunchedEffect(page?.spec?.index, mode) {
+        if (mode == ViewMode.HTML) {
+            page?.let { vm.showHtml(it, vm.showingBackup) }
         }
     }
 
@@ -243,13 +257,14 @@ fun DocumentScreen(
                     ActionBtn(
                         label = "Digitize",
                         icon = Icons.Filled.AutoAwesome,
-                        enabled = status != ScanStatus.Processing && status != ScanStatus.Queued,
+                        enabled = busy == null &&
+                            status != ScanStatus.Processing && status != ScanStatus.Queued,
                     ) {
                         vm.digitize(page, page.spec.aiMode, null)
                         mode = ViewMode.PAGE
                     }
                     ActionBtn(label = "Re-run", icon = Icons.Filled.Refresh,
-                        enabled = page.htmlUri != null || status == ScanStatus.Error) {
+                        enabled = busy == null && (page.htmlUri != null || status == ScanStatus.Error)) {
                         showFeedback = true
                     }
 
@@ -343,7 +358,8 @@ fun DocumentScreen(
             },
             confirmButton = {
                 TextButton(
-                    enabled = status != ScanStatus.Queued && status != ScanStatus.Processing,
+                    enabled = busy == null &&
+                        status != ScanStatus.Queued && status != ScanStatus.Processing,
                     onClick = {
                         page?.let { vm.digitize(it, pickMode, feedback.ifBlank { null }) }
                         feedback = ""; showFeedback = false; mode = ViewMode.PAGE

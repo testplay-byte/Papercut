@@ -35,6 +35,16 @@ import javax.net.ssl.SSLException
 
 /** Domain errors the queue can act on (rotate key / back off / give up). */
 sealed class AiException(message: String) : Exception(message) {
+    companion object {
+        const val TAG_AUTH = "auth"
+    }
+
+    /**
+     * Stable, obfuscation-proof identifier persisted into KeyEntry.lastFailure.
+     * Never use Class.simpleName here: R8 renames it in release builds.
+     */
+    open val tag: String get() = "other"
+
     class NoProviderConfigured : AiException("No AI provider configured — open Settings")
     class NoUsableKeys : AiException("Add an API key for this provider in Settings")
     /** retryInSecs > 0: cooling down. -1: every key was REJECTED — replace them. */
@@ -43,8 +53,12 @@ sealed class AiException(message: String) : Exception(message) {
             if (retryInSecs > 0) "Every key is cooling down — retry in ${retryInSecs}s"
             else "All keys were rejected (401) — check them in Settings",
         )
-    class Auth : AiException("Provider rejected the API key (401) — add a valid key")
-    class RateLimited : AiException("Rate limited by provider (429) — will retry")
+    class Auth : AiException("Provider rejected the API key (401) — add a valid key") {
+        override val tag: String get() = TAG_AUTH
+    }
+    class RateLimited : AiException("Rate limited by provider (429) — will retry") {
+        override val tag: String get() = "rate-limited"
+    }
     class Server(val status: Int, detail: String? = null) :
         AiException(if (detail != null) "Provider: $detail" else "Provider error (HTTP $status)")
     class Timeout(val host: String) : AiException("Timed out talking to $host — try again or raise the timeout")

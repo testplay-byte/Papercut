@@ -75,8 +75,10 @@ class ScannerViewModel(
     /** Remove a draft page with an UNDO path (a lost capture is unrecoverable). */
     fun removePage(index: Int) {
         val removed = drafts.removePage(index) ?: return
+        val gen = drafts.generation
         container.messages.postWithAction("Page removed", "Undo") {
-            drafts.restorePage(removed, index)
+            // only restore into the SAME session — a save already cleared it
+            if (drafts.generation == gen) drafts.restorePage(removed, index)
         }
     }
 
@@ -90,8 +92,9 @@ class ScannerViewModel(
         val current = drafts.pages.value
         if (current.isEmpty()) { onDone(null, null, false); return }
         _saving.value = true
-        // draft owns its folder (resume may come from a different scope)
-        val targetFolder = drafts.folder.value ?: folderName
+        // append targets are always same-folder; only NEW documents follow the
+        // draft's folder (a resumed session may have been captured elsewhere)
+        val targetFolder = if (appendToDoc != null) folderName else (drafts.folder.value ?: folderName)
         viewModelScope.launch {
             val bits = current.map { it.bitmap }
             val edits = current.map { PageEdits(it.quad, it.rotation, it.filter, it.mode) }

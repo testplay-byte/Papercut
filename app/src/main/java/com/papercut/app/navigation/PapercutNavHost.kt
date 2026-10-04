@@ -97,6 +97,13 @@ fun PapercutNavHost(
                     onScanNew = { navController.navigate(Route.Scanner(folder).path) },
                     onOpenSettings = { navController.navigate(Route.Settings.path) },
                     onBack = { navController.popBackStack() },
+                    onOpenFolder = { name ->
+                        // inside a folder, sibling folder chips must still navigate
+                        navController.navigate(Route.Folder(name).path) {
+                            popUpTo(Route.Library.path)
+                            launchSingleTop = true
+                        }
+                    },
                 )
             }
             composable(
@@ -117,9 +124,12 @@ fun PapercutNavHost(
                         navController.navigate(Route.Editor(index).path)
                     },
                     onSaved = { savedFolder, savedName ->
-                        // go straight to the document we just saved
+                        // go straight to the document we just saved, popping
+                        // back to the folder we scanned FROM (not "All")
+                        val home = if (savedFolder == DocumentRepository.DEFAULT_FOLDER)
+                            Route.Library.path else Route.Folder(savedFolder).path
                         navController.navigate(Route.Document(savedFolder, savedName).path) {
-                            popUpTo(Route.Library.path)
+                            popUpTo(home)
                         }
                     },
                     onDraftKept = { count ->

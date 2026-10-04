@@ -97,8 +97,10 @@ class ProcessingQueue(
 
     fun cancel(folder: String, doc: String, page: Int) {
         val key = statusKey(folder, doc, page)
-        val active = runningJobs.remove(key)
-        if (active != null) active.cancel()
+        // tombstone FIRST: a task still sitting in the Channel has no Job to
+        // cancel, and would otherwise run, bill, and write to the document
+        cancelledKeys.add(key)
+        runningJobs.remove(key)?.cancel()
         _statuses.update { it - key }
     }
 
@@ -147,14 +149,18 @@ class ProcessingQueue(
                     setStatus(key, ScanStatus.Error, "Could not read the page image")
                     return
                 }
+            // ONE finally-owned bitmap: the old code recycled inline, which
+            // leaked ~10 MB on every cancellation that landed in the back-off
             val rendered = try {
-                PagePipeline.render(raw, task.page.spec)
+                val out = PagePipeline.render(raw, task.page.spec)
+                if (out !== raw) raw.recycle()
+                out
             } catch (e: OutOfMemoryError) {
                 raw.recycle()
                 setStatus(key, ScanStatus.Error, "Page too large to process on this device")
                 return
             }
-            if (rendered !== raw) raw.recycle()
+            try {
 
             val prompt = buildPrompt(task.mode, task.feedback)
             setStatus(key, ScanStatus.Processing)
@@ -167,7 +173,7 @@ class ProcessingQueue(
                     val mine = settings.settings.value.keys.filter { it.providerId == provider.id }
                     lastError = if (mine.isEmpty()) {
                         AiException.NoUsableKeys()
-                    } else if (mine.all { it.lastFailure == "Auth" }) {
+                    } else if (mine.all { it.lastFailure == AiException.TAG_AUTH }) {
                         AiException.AllKeysCooling(-1) // rejected — replace them
                     } else {
                         val waitSecs = ((mine.maxOf { it.cooldownUntil } - System.currentTimeMillis()) / 1000L)
@@ -189,7 +195,6 @@ class ProcessingQueue(
                         AiException.StorageFailed() // not retryable — stop burning keys
                     }
                 } catch (e: CancellationException) {
-                    rendered.recycle()
                     throw e
                 } catch (e: AiException) {
                     if (keyEntry != null) handleKeyFailure(keyEntry.id, e)
@@ -198,7 +203,6 @@ class ProcessingQueue(
                     AiException.Network(e.message ?: "")
                 }
                 if (outcome == null) {
-                    rendered.recycle()
                     setStatus(key, ScanStatus.Done)
                     return
                 }
@@ -209,8 +213,10 @@ class ProcessingQueue(
                 ) break
             }
 
-            rendered.recycle()
-            setStatus(key, ScanStatus.Error, lastError?.message ?: "Digitization failed")
+                setStatus(key, ScanStatus.Error, lastError?.message ?: "Digitization failed")
+            } finally {
+                rendered.recycle()
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: OutOfMemoryError) {
@@ -231,8 +237,12 @@ class ProcessingQueue(
 
     private fun markKeySuccess(keyId: String) = settings.update { s ->
         s.copy(keys = s.keys.map {
-            if (it.id == keyId) it.copy(totalUses = it.totalUses + 1, cooldownUntil = 0L, lastFailure = null)
-            else it
+            if (it.id == keyId) it.copy(
+                totalUses = it.totalUses + 1,
+                cooldownUntil = 0L,
+                failures = (it.failures - 1).coerceAtLeast(0),
+                lastFailure = null,
+            ) else it
         })
     }
 
@@ -248,7 +258,7 @@ class ProcessingQueue(
                 if (it.id == keyId) it.copy(
                     cooldownUntil = System.currentTimeMillis() + bench,
                     failures = it.failures + 1,
-                    lastFailure = e.javaClass.simpleName,
+                    lastFailure = e.tag,
                 ) else it
             })
         }

@@ -58,7 +58,17 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun resetPrompt(mode: ScanMode) = container.settings.resetPrompt(mode)
 
     fun toggleProvider(id: String) = container.settings.update { s ->
-        s.copy(providers = s.providers.map { if (it.id == id) it.copy(enabled = !it.enabled) else it })
+        val target = s.providers.find { it.id == id }
+        val disabling = target?.enabled == true
+        val providers = s.providers.map { if (it.id == id) it.copy(enabled = !it.enabled) else it }
+        // disabling the active provider would leave the queue silently billing
+        // a provider the user never chose — repoint it
+        if (disabling && s.activeProviderId == id) {
+            val next = providers.firstOrNull { it.enabled && it.models.isNotEmpty() }
+            s.copy(providers = providers, activeProviderId = next?.id, activeModel = next?.models?.firstOrNull())
+        } else {
+            s.copy(providers = providers)
+        }
     }
 
     /** Re-point storage at another folder (permission taken in the repository). */

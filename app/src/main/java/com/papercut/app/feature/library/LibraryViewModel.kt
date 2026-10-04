@@ -96,12 +96,16 @@ class LibraryViewModel(
     }
 
     fun renameFolder(old: String, new: String) = viewModelScope.launch {
-        if (container.docs.renameFolder(old, new)) load(_scope.value)
-        else container.messages.post("Could not rename folder")
+        if (container.docs.renameFolder(old, new)) {
+            // standing inside the folder we just renamed: follow it there
+            if (_scope.value == old) load(new) else load(_scope.value)
+        } else container.messages.post("Could not rename folder")
     }
 
     fun deleteFolder(name: String) = viewModelScope.launch {
-        if (container.docs.deleteFolder(name)) load(_scope.value)
+        if (container.docs.deleteFolder(name)) {
+            if (_scope.value == name) load(null) else load(_scope.value) // it no longer exists
+        }
         else container.messages.post(
             if (name == DocumentRepository.DEFAULT_FOLDER) "Default folder can't be deleted"
             else "Could not delete folder",
@@ -109,7 +113,8 @@ class LibraryViewModel(
     }
 
     fun renameDocument(doc: DocumentSummary, newName: String) = viewModelScope.launch {
-        val ok = container.docs.renameDocument(doc.folder, doc.name, newName)
+        if (newName.trim() == doc.name) return@launch // nothing to do, not an error
+        val ok = container.docs.renameDocument(doc.folder, doc.name, newName.trim())
         if (ok) {
             container.queue.invalidateDocument(doc.folder, doc.name) // stale index-keyed badges
             load(_scope.value)
@@ -139,6 +144,7 @@ class LibraryViewModel(
         }
         container.messages.post(if (submitted > 0) "Queued $submitted page(s)" else "Nothing new to digitize")
         _selected.value = emptySet()
+        load(_scope.value) // refresh counts so the tiles don't lie
     }
 
     fun deleteSelected() = viewModelScope.launch {

@@ -30,6 +30,13 @@ class DraftStore {
     private val _pages = MutableStateFlow<List<DraftPage>>(emptyList())
     val pages: StateFlow<List<DraftPage>> = _pages.asStateFlow()
 
+    /**
+     * Bumped on every clear() so a stale Undo (held by a snackbar) can't
+     * resurrect a page into a session that was already saved.
+     */
+    @Volatile var generation: Int = 0
+        private set
+
     /** Folder the draft started in — resume saves there, not wherever Library sits. */
     private val _folder = MutableStateFlow<String?>(null)
     val folder: StateFlow<String?> = _folder.asStateFlow()
@@ -92,6 +99,7 @@ class DraftStore {
         _pages.value = emptyList()
         _name.value = ""
         _folder.value = null
+        generation++
     }
 
     val isEmpty: Boolean get() = _pages.value.isEmpty()

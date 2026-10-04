@@ -94,7 +94,7 @@ object PdfExporter {
         writeString("0000000000 65535 f \n")
         for (id in 1..maxId) {
             val off = offsets[id] ?: error("missing object $id")
-            writeString(String.format("%010d 00000 n \n", off))
+            writeString(String.format(java.util.Locale.US, "%010d 00000 n \n", off))
         }
         writeString("trailer\n<< /Size ${maxId + 1} /Root 1 0 R >>\nstartxref\n$xrefPos\n%%EOF\n")
 
