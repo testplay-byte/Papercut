@@ -91,7 +91,8 @@ Open any document:
 From the document's **Export** sheet:
 
 - **PDF — all pages** → corrected pages assembled into one PDF in
-  **Downloads** (opens immediately).
+  **Downloads/Papercut** (opens immediately). Long documents are encoded
+  page-by-page so they don't blow up memory.
 - **PDF — share** → the same file straight to any app.
 - **4K image** (digitized pages) → the twin rendered at A4/300dpi into
   **Pictures/Papercut** as PNG. MathJax formulas are fully typeset before
