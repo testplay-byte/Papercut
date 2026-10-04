@@ -30,6 +30,10 @@ Papercut ships presets but **no keys**. Add one:
 4. Have several keys? Add them all — Papercut rotates them automatically:
    the least-used healthy key runs each job; a rate-limited key rests 60s,
    a rejected key rests 10 min (visible on the key card: *cooling — retry in 58s*).
+   If every key is rejected the app says so instead of counting down.
+5. **Local servers (Ollama / LM Studio)** need **no API key** — switch the
+   provider on, tap **Edit**, and point **Base URL** at your PC's LAN address
+   (e.g. `http://192.168.1.2:11434/v1`), then comma-separate the model names.
 
 **Using your own server instead?** **＋ Add / manage providers** → paste the
 base URL ending in `/v1` (e.g. `http://192.168.1.20:11434/v1` for Ollama),
@@ -48,7 +52,8 @@ OpenAI-compatible vision endpoint works.
    - **Tap a thumbnail** → crop editor: drag the 4 orange corners over the
      page edges (live perspective correction), rotate, choose a filter
      (Magic / Original / Gray / B&W), ✓ to apply.
-   - **Hold a thumbnail** → delete that page.
+   - **Hold a thumbnail** → delete that page (an **Undo** snackbar follows — it
+     only restores into the same session, never into a saved document).
 5. Tap **Done** → name the document → **Save**. Closing early is safe: the
    Library shows a *Unsaved capture — Resume* banner until you save or discard.
 6. With **Auto-digitize** on (Settings → Behavior), every saved page instantly
@@ -70,7 +75,8 @@ Open any document:
 - The page shows its **corrected render** (crop + filter). Pinch to zoom,
   double-tap for 2.5×. The filmstrip below switches pages; badges show status.
 - **Twin ⇄ Page** toggles between the photo and the digitized HTML — the view
-  flips to the twin automatically the moment digitizing finishes.
+  flips to the twin the moment *that page* finishes digitizing. Twins render at
+  their authored 1080px width (the **Fit / 1:1** chip switches zoom).
 - **Digitize** runs the AI on the current page (its stored Text/Notes mode);
   **Re-run** lets you type what went wrong (*"the table on the right was
   dropped"*) — the previous twin is kept automatically.
