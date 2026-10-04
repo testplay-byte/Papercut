@@ -84,7 +84,7 @@ sealed class AiException(message: String) : Exception(message) {
     class EmptyResult : AiException("Model returned no content")
     /** Response looked truncated (finish_reason = length) or wasn't valid HTML. */
     class Truncated : AiException("The page is too complex — the model's answer got cut off. Try a Notes page or a crop.")
-    class StorageFailed : AiException("Couldn't write the result to your folder — check storage access")
+    class StorageFailed : AiException("Couldn't save the digital twin to your folder — try Re-run; if it repeats, re-pick the storage folder in Settings")
     class BadConfig : AiException("Provider has no model selected — pick one in Settings")
 }
 

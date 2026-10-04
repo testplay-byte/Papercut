@@ -348,32 +348,32 @@ class DocumentRepository(
 
                 // moved: currentName -> originalName (reverse map for rollback)
                 val moved = ArrayList<Pair<String, String>>()
-                fun rename(from: String, to: String): Boolean {
+                fun rename(from: String, to: String, mime: String): Boolean {
                     val f = dir.findFile(from) ?: return false
-                    if (!f.renameTo(to)) return false
+                    if (!moveWithin(dir, f, to, mime)) return false
                     moved += to to from
                     return true
                 }
                 // pass 1 — park everything under self-describing temp names
                 for (p in specs) {
-                    if (!rename(p.fileName, tmpOf(p.fileName))) return@withContext rollback(dir, moved)
+                    if (!rename(p.fileName, tmpOf(p.fileName), "image/jpeg")) return@withContext rollback(dir, moved)
                     dir.findFile(htmlFile(p.index))?.let {
-                        if (!rename(it.name!!, tmpOf(htmlFile(p.index)))) return@withContext rollback(dir, moved)
+                        if (!rename(it.name!!, tmpOf(htmlFile(p.index)), "text/html")) return@withContext rollback(dir, moved)
                     }
                     dir.findFile(htmlBackupFile(p.index))?.let {
-                        if (!rename(it.name!!, tmpOf(htmlBackupFile(p.index)))) return@withContext rollback(dir, moved)
+                        if (!rename(it.name!!, tmpOf(htmlBackupFile(p.index)), "text/html")) return@withContext rollback(dir, moved)
                     }
                 }
                 // pass 2 — temps into final 1-based slots (all vacated by pass 1)
                 val newPages = ArrayList<PageSpec>()
                 for ((i, p) in specs.withIndex()) {
                     val slot = pageFile(i + 1)
-                    if (!rename(tmpOf(p.fileName), slot)) return@withContext rollback(dir, moved)
+                    if (!rename(tmpOf(p.fileName), slot, "image/jpeg")) return@withContext rollback(dir, moved)
                     dir.findFile(tmpOf(htmlFile(p.index)))?.let {
-                        rename(it.name!!, htmlFile(i + 1))
+                        rename(it.name!!, htmlFile(i + 1), "text/html")
                     }
                     dir.findFile(tmpOf(htmlBackupFile(p.index)))?.let {
-                        rename(it.name!!, htmlBackupFile(i + 1))
+                        rename(it.name!!, htmlBackupFile(i + 1), "text/html")
                     }
                     newPages += p.copy(index = i + 1, fileName = slot)
                 }
@@ -392,20 +392,27 @@ class DocumentRepository(
      * Restore artifacts left as tmp-* by an interrupted rename. These files hold
      * UNTOUCHED originals — renaming them back is safe. `tmp-twin.html` is the
      * twin scratch file and is the only one we delete.
+     * NEVER delete a tmp-* payload on failure: on providers where renameTo
+     * fails silently the tmp file may be the ONLY copy — leaving it in place
+     * is recoverable (self-heals next time), deleting it is not.
      */
     private fun restoreTmp(dir: DocumentFile) {
         dir.listFiles().filter { it.isFile && it.name?.startsWith("tmp-") == true }.forEach { f ->
             val n = f.name ?: return@forEach
             if (n == "tmp-twin.html") { f.delete(); return@forEach }
             val original = n.removePrefix("tmp-")
-            if (!f.renameTo(original)) f.delete() // only now is deleting safe
+            if (!moveWithin(dir, f, original, if (original.endsWith(".jpg")) "image/jpeg" else "text/html")) {
+                // leave it as tmp-* — nothing here is lost, just parked
+            }
         }
     }
 
     /** Undo a failed reorder (reverse order so targets are free again). */
     private fun rollback(dir: DocumentFile, moved: List<Pair<String, String>>): Boolean {
         moved.asReversed().forEach { (current, original) ->
-            dir.findFile(current)?.renameTo(original) ?: dir.findFile(original)
+            val mime = if (original.endsWith(".jpg")) "image/jpeg" else "text/html"
+            dir.findFile(current)?.let { moveWithin(dir, it, original, mime) }
+                ?: dir.findFile(original) // already back in place — fine
         }
         restoreTmp(dir)
         return false
@@ -423,14 +430,19 @@ class DocumentRepository(
                 dir.findFile(htmlBackupFile(pageIndex))?.delete()
                 // shift each remaining page's photo + twin + backup into its new slot
                 val remaining = meta.pages.filter { it.index != pageIndex }.sortedBy { it.index }
+                var shiftsOk = true
                 for ((i, p) in remaining.withIndex()) {
                     val newSlot = i + 1
                     if (p.index != newSlot) {
-                        dir.findFile(p.fileName)?.renameTo(pageFile(newSlot))
-                        dir.findFile(htmlFile(p.index))?.renameTo(htmlFile(newSlot))
-                        dir.findFile(htmlBackupFile(p.index))?.renameTo(htmlBackupFile(newSlot))
+                        // the PHOTO move is mandatory — meta must never claim a
+                        // layout whose photos aren't there. Twins are advisory.
+                        val f = dir.findFile(p.fileName)
+                        if (f == null || !moveWithin(dir, f, pageFile(newSlot), "image/jpeg")) shiftsOk = false
+                        dir.findFile(htmlFile(p.index))?.let { moveWithin(dir, it, htmlFile(newSlot), "text/html") }
+                        dir.findFile(htmlBackupFile(p.index))?.let { moveWithin(dir, it, htmlBackupFile(newSlot), "text/html") }
                     }
                 }
+                if (!shiftsOk) return@withContext false // meta untouched — retryable
                 writeMeta(dir, meta.copy(
                     pages = remaining.mapIndexed { i, p -> p.copy(index = i + 1, fileName = pageFile(i + 1)) },
                 ))
@@ -482,6 +494,40 @@ class DocumentRepository(
     // ---------------- AI results per page ----------------
 
     /**
+     * Move `from` to `toName` inside `dir`. SAF renameTo is the LEAST supported
+     * operation across storage providers (silently fails on some SD cards and
+     * OEM ExternalStorageProviders — field report 2026-10-04: photos saved but
+     * every twin write failed) — so fall back to streaming copy + delete-source.
+     * The source is deleted only after the target is written AND verified
+     * non-empty; every caller has already vacated `toName` (or it's a tmp name).
+     */
+    private fun moveWithin(dir: DocumentFile, from: DocumentFile, toName: String, mime: String): Boolean {
+        if (from.renameTo(toName)) return true
+        return try {
+            val target = dir.createFile(mime, toName) ?: return false
+            // providers that dedupe createFile hand back "x (1)" — that file is
+            // NOT the slot we promised to fill
+            if (target.name != toName) { target.delete(); return false }
+            val written = try {
+                context.contentResolver.openOutputStream(target.uri, "wt")?.use { out ->
+                    context.contentResolver.openInputStream(from.uri)?.use { src -> src.copyTo(out) }
+                    true
+                } ?: false
+            } catch (_: Exception) {
+                false
+            }
+            // a zero-byte target plus a deleted source is unrecoverable, so the
+            // size check gates the source delete — an empty source file just
+            // never moves (callers only move real payloads)
+            val ok = written && target.length() > 0
+            if (ok) from.delete() else target.delete()
+            ok
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
      * Write AI html for a page, demoting current to backup. Works for legacy
      * via migration. Resolves the slot by PHOTO IDENTITY (file name), never by
      * position — a twin landing on someone else's page is unrecoverable.
@@ -509,12 +555,13 @@ class DocumentRepository(
                 false
             }
             if (!written) { tmp.delete(); return@withContext false }
-            // 2. only now demote the previous twin, then swap the new one in
+            // 2. demote the previous twin, then swap the new one in — both via
+            //    rename OR copy fallback (renameTo alone fails on some providers)
             dir.findFile(htmlBackupFile(slot))?.delete()
             dir.findFile(htmlFile(slot))?.let { cur ->
-                if (!cur.renameTo(htmlBackupFile(slot))) cur.delete()
+                if (!moveWithin(dir, cur, htmlBackupFile(slot), "text/html")) cur.delete()
             }
-            val swapped = tmp.renameTo(htmlFile(slot))
+            val swapped = moveWithin(dir, tmp, htmlFile(slot), "text/html")
             if (!swapped) tmp.delete()
             swapped
         } finally {
@@ -528,7 +575,8 @@ class DocumentRepository(
             try {
                 val dir = documentDir(folder, docName) ?: return@withContext false
                 dir.findFile(htmlFile(pageIndex))?.delete()
-                dir.findFile(htmlBackupFile(pageIndex))?.renameTo(htmlFile(pageIndex)) ?: false
+                val backup = dir.findFile(htmlBackupFile(pageIndex)) ?: return@withContext false
+                moveWithin(dir, backup, htmlFile(pageIndex), "text/html")
             } finally {
                 metaLock.unlock()
             }
