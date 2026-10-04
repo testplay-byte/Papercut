@@ -33,7 +33,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.WandMagicSparkles
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -239,7 +239,7 @@ fun DocumentScreen(
                     }
                     ActionBtn(
                         label = "Digitize",
-                        icon = Icons.Filled.WandMagicSparkles,
+                        icon = Icons.Filled.AutoAwesome,
                         enabled = status != ScanStatus.Processing && status != ScanStatus.Queued,
                     ) {
                         vm.digitize(page, page.spec.aiMode, null)

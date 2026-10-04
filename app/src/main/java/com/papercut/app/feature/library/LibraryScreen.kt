@@ -33,7 +33,7 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sort
-import androidx.compose.material.icons.filled.WandMagicSparkles
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -281,7 +281,7 @@ fun LibraryScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Icon(Icons.Filled.WandMagicSparkles, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                    Icon(Icons.Filled.AutoAwesome, null, tint = Color.White, modifier = Modifier.size(14.dp))
                     Text("Digitize", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
                 val xdi = remember { MutableInteractionSource() }

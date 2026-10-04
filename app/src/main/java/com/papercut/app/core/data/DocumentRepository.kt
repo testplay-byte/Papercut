@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import com.papercut.app.core.data.model.DocumentMeta
+import com.papercut.app.core.data.model.PageEdits
 import com.papercut.app.core.data.model.DocumentSummary
 import com.papercut.app.core.data.model.PageSpec
 import com.papercut.app.core.data.model.PageView

@@ -21,7 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.RotateRight
-import androidx.compose.material.icons.filled.WandMagicSparkles
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -180,7 +180,7 @@ fun EditorScreen(draftIndex: Int, onBack: () -> Unit) {
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(PageFilter.MAGIC, "Magic", s.filter, Icons.Filled.WandMagicSparkles) { vm.setFilter(it) }
+                FilterChip(PageFilter.MAGIC, "Magic", s.filter, Icons.Filled.AutoAwesome) { vm.setFilter(it) }
                 FilterChip(PageFilter.ORIGINAL, "Original", s.filter) { vm.setFilter(it) }
                 FilterChip(PageFilter.GRAYSCALE, "Gray", s.filter) { vm.setFilter(it) }
                 FilterChip(PageFilter.BLACK_WHITE, "B&W", s.filter) { vm.setFilter(it) }
