@@ -235,7 +235,7 @@ fun ScannerScreen(
                     .tap(shutterInter) {
                         if (!capturing && !saving) {
                             haptics.performHapticFeedback(
-                                androidx.compose.ui.hapticfeedback.HapticFeedbackType.VirtualKey,
+                                androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
                             )
                             vm.beginCapture()
                             takePicture(context, imageCapture, vm)
