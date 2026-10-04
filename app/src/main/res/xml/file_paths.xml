@@ -2,5 +2,5 @@
 <paths>
     <!-- only the share cache + app Downloads leave the app, never the scan library -->
     <cache-path name="shared" path="shared/" />
-    <external-files-path name="downloads" path="Downloads/" />
+    <external-files-path name="downloads" path="Download/" />
 </paths>

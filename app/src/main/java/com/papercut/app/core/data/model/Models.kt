@@ -24,6 +24,8 @@ data class AiProvider(
     val models: List<String> = emptyList(),
     val isBuiltIn: Boolean = false,    // built-ins can be disabled but not deleted-by-name
     val enabled: Boolean = true,
+    /** false = local servers (Ollama/LM Studio) that ignore the Authorization header. */
+    val requiresKey: Boolean = true,
 )
 
 /**
@@ -36,9 +38,13 @@ data class KeyEntry(
     val providerId: String,
     val label: String,
     val addedAt: Long,
-    /** Epoch millis until which this key is cooling down (after 429/auth errors). */
+    /** Epoch millis until which this key is cooling down (after 429/401 errors). */
     val cooldownUntil: Long = 0L,
     val totalUses: Int = 0,
+    /** Rejected/limited count — a key that only ever failed sorts last. */
+    val failures: Int = 0,
+    /** Simple class name of the last AiException, for "keys rejected" messaging. */
+    val lastFailure: String? = null,
 )
 
 /** The full persisted settings document (app-private storage, no secrets inside). */

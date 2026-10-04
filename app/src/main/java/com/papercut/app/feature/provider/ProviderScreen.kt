@@ -271,6 +271,17 @@ private fun NewProviderScreen(onBack: () -> Unit) {
             .padding(PaperGap.l),
         verticalArrangement = Arrangement.spacedBy(PaperGap.m),
     ) {
+        val backInter = remember { MutableInteractionSource() }
+        Box(
+            modifier = Modifier.size(40.dp).pressScale(backInter)
+                .clip(RoundedCornerShape(PaperRadii.small))
+                .background(PaperColors.Tile)
+                .tap(backInter, onBack),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = PaperColors.Ink,
+                modifier = Modifier.size(18.dp))
+        }
         StatCaption("Add a custom provider (any OpenAI-compatible server)")
         OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name — e.g. My VPS") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it }, label = { Text("Base URL") }, placeholder = { Text("http://192.168.1.20:11434/v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())

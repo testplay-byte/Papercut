@@ -110,7 +110,20 @@ fun ScannerScreen(
             .background(PaperColors.NightCanvas),
     ) {
         if (!cameraPermission.status.isGranted) {
-            PermissionNudge(onAllow = { cameraPermission.launchPermissionRequest() })
+            // Once the system stops showing the dialog, launchPermissionRequest()
+            // silently does nothing — so offer App Settings + keep Back reachable.
+            PermissionNudge(
+                permanentlyDenied = !cameraPermission.status.shouldShowRationale &&
+                    cameraPermission.launchedOnce,
+                onAllow = { cameraPermission.launchPermissionRequest() },
+                onOpenSettings = {
+                    context.startActivity(android.content.Intent(
+                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        android.net.Uri.fromParts("package", context.packageName, null),
+                    ))
+                },
+                onBack = onBack,
+            )
             return@Box
         }
 
@@ -412,23 +425,44 @@ private fun Modifier.combinedTap(
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
-private fun PermissionNudge(onAllow: () -> Unit) {
+private fun PermissionNudge(
+    permanentlyDenied: Boolean,
+    onAllow: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onBack: () -> Unit,
+) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(PaperGap.m, Alignment.CenterVertically),
         modifier = Modifier.fillMaxSize(),
     ) {
         Text("Papercut needs the camera.", color = PaperColors.NightInk, fontSize = 16.sp)
+        Text(
+            if (permanentlyDenied) "Camera access is turned off for Papercut."
+            else "Allow it to start scanning.",
+            color = PaperColors.NightInkSecondary, fontSize = 13.sp,
+        )
         val interaction = remember { MutableInteractionSource() }
         Box(
             modifier = Modifier
                 .pressScale(interaction)
                 .background(PaperColors.Accent, RoundedCornerShape(PaperRadii.pill))
-                .tap(interaction, onAllow)
+                .tap(interaction) {
+                    if (permanentlyDenied) onOpenSettings() else onAllow()
+                }
                 .padding(horizontal = 26.dp, vertical = 12.dp),
         ) {
-            Text("Allow camera", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Text(
+                if (permanentlyDenied) "Open settings" else "Allow camera",
+                color = Color.White, fontWeight = FontWeight.SemiBold,
+            )
         }
+        val backInter = remember { MutableInteractionSource() }
+        Text(
+            "Back",
+            color = PaperColors.NightInkSecondary, fontSize = 13.sp,
+            modifier = Modifier.pressScale(backInter).tap(backInter, onBack).padding(12.dp),
+        )
     }
 }
 
@@ -502,13 +536,16 @@ private fun ViewfinderOverlay() {
     Canvas(modifier = Modifier.fillMaxSize()) {
         val w = size.width
         val h = size.height
+        // dp-scaled strokes — raw px rendered as a hairline on high-density phones
+        val gridW = 1.2.dp.toPx()
+        val bracketW = 3.5.dp.toPx()
+        val len = 44.dp.toPx()
         val grid = Color.White.copy(alpha = 0.18f)
         for (i in 1..2) {
-            drawLine(grid, Offset(w * i / 3f, h * 0.16f), Offset(w * i / 3f, h * 0.84f), 1.5f)
-            drawLine(grid, Offset(w * 0.08f, h * i / 3f), Offset(w * 0.92f, h * i / 3f), 1.5f)
+            drawLine(grid, Offset(w * i / 3f, h * 0.16f), Offset(w * i / 3f, h * 0.84f), gridW)
+            drawLine(grid, Offset(w * 0.08f, h * i / 3f), Offset(w * 0.92f, h * i / 3f), gridW)
         }
         val bracket = Color.White.copy(alpha = 0.8f)
-        val len = 44f
         val insetX = w * 0.08f
         val insetY = h * 0.17f
         listOf(
@@ -517,8 +554,8 @@ private fun ViewfinderOverlay() {
             Triple(insetX, h - insetY, 1 to -1),
             Triple(w - insetX, h - insetY, -1 to -1),
         ).forEach { (x, y, dirs) ->
-            drawLine(bracket, Offset(x, y), Offset(x + dirs.first * len, y), 5f, cap = StrokeCap.Round)
-            drawLine(bracket, Offset(x, y), Offset(x, y + dirs.second * len), 5f, cap = StrokeCap.Round)
+            drawLine(bracket, Offset(x, y), Offset(x + dirs.first * len, y), bracketW, cap = StrokeCap.Round)
+            drawLine(bracket, Offset(x, y), Offset(x, y + dirs.second * len), bracketW, cap = StrokeCap.Round)
         }
     }
 }

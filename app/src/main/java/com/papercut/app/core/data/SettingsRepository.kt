@@ -38,6 +38,14 @@ class SettingsRepository(
         /** Ready-to-use provider presets; the user can add custom ones in Settings. */
         fun builtInProviders(): List<AiProvider> = listOf(
             AiProvider(
+                id = "google-ai",
+                name = "Google AI Studio",
+                baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai",
+                format = ProviderFormat.OPENAI_CHAT,
+                models = listOf("gemini-2.5-flash", "gemini-2.5-pro"),
+                isBuiltIn = true,
+            ),
+            AiProvider(
                 id = "openai",
                 name = "OpenAI",
                 baseUrl = "https://api.openai.com/v1",
@@ -51,18 +59,10 @@ class SettingsRepository(
                 baseUrl = "https://openrouter.ai/api/v1",
                 format = ProviderFormat.OPENAI_CHAT,
                 models = listOf(
-                    "google/gemini-2.0-flash-001",
+                    "google/gemini-2.5-flash",
                     "anthropic/claude-3.5-sonnet",
                     "openai/gpt-4o-mini",
                 ),
-                isBuiltIn = true,
-            ),
-            AiProvider(
-                id = "google-ai",
-                name = "Google AI Studio",
-                baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai",
-                format = ProviderFormat.OPENAI_CHAT,
-                models = listOf("gemini-2.0-flash", "gemini-2.5-flash"),
                 isBuiltIn = true,
             ),
             AiProvider(
@@ -70,17 +70,28 @@ class SettingsRepository(
                 name = "Groq",
                 baseUrl = "https://api.groq.com/openai/v1",
                 format = ProviderFormat.OPENAI_CHAT,
-                models = listOf("llama-3.2-90b-vision-preview"),
+                models = listOf("meta-llama/llama-4-scout-17b-16e-instruct"),
                 isBuiltIn = true,
             ),
+            // Local servers need a LAN IP (127.0.0.1 is the phone itself) and
+            // ignore the Authorization header — edit the URL to your PC's IP.
             AiProvider(
-                id = "local",
-                name = "Local (Ollama / LM Studio)",
-                baseUrl = "http://127.0.0.1:1234/v1",
+                id = "ollama",
+                name = "Ollama (local)",
+                baseUrl = "http://192.168.1.2:11434/v1",
+                format = ProviderFormat.OPENAI_CHAT,
+                models = listOf("llama3.2-vision:11b"),
+                isBuiltIn = true,
+                requiresKey = false,
+            ),
+            AiProvider(
+                id = "lmstudio",
+                name = "LM Studio (local)",
+                baseUrl = "http://192.168.1.2:1234/v1",
                 format = ProviderFormat.OPENAI_CHAT,
                 models = emptyList(),
                 isBuiltIn = true,
-                enabled = false,
+                requiresKey = false,
             ),
         )
     }
@@ -88,8 +99,15 @@ class SettingsRepository(
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /** One long-lived scope for persistence writes (no fire-and-forget scopes). */
-    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /**
+     * One writer, ordered: a single-threaded dispatcher means the LAST launched
+     * write is the LAST applied. A shared IO pool could persist an older
+     * snapshot after a newer one (resurrecting a removed key, losing cooldowns).
+     */
+    private val persistDispatcher = Dispatchers.IO.limitedParallelism(1)
+    private val persistScope = CoroutineScope(SupervisorJob() + persistDispatcher)
+
+    private val updateLock = Any()
 
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -105,25 +123,32 @@ class SettingsRepository(
             }
         }
         _settings.value = loaded?.withMigrations() ?: freshDefaults()
-        persist(_settings.value)
+        update { it } // persists the migrated/defaulted doc in order
     }
 
     private fun freshDefaults(): AppSettings = AppSettings(
         providers = builtInProviders(),
         prompts = ScanMode.entries.associate { it.name to PromptTemplates.defaultFor(it) },
         activeProviderId = "google-ai",
-        activeModel = "gemini-2.0-flash",
+        activeModel = "gemini-2.5-flash",
     )
 
     /** Forward-compatible fixes for docs written by older versions. */
     private fun AppSettings.withMigrations(): AppSettings {
         val builtIns = builtInProviders()
         // keep built-ins up to date (model lists drift), preserve user custom providers
-        val merged = builtIns.map { bi -> providers.find { it.id == bi.id }?.let { bi.copy(enabled = it.enabled) } ?: bi } +
-            providers.filter { p -> !p.isBuiltIn }
+        // refresh built-ins from code (model lists drift), but keep the user's
+        // enable state and any custom providers they added
+        val merged = builtIns.map { bi ->
+            providers.find { it.id == bi.id }?.let { bi.copy(enabled = it.enabled) } ?: bi
+        } + providers.filter { p -> !p.isBuiltIn }
         val defaultsMissing = ScanMode.entries.any { prompts[it.name].isNullOrBlank() }
         return copy(
             providers = merged,
+            // an active provider that no longer exists would digitize nothing
+            activeProviderId = if (merged.any { it.id == activeProviderId }) activeProviderId else "google-ai",
+            activeModel = if (merged.find { it.id == activeProviderId }?.models?.contains(activeModel) == true)
+                activeModel else merged.firstOrNull { it.models.isNotEmpty() }?.models?.firstOrNull(),
             prompts = if (defaultsMissing) prompts + ScanMode.entries
                 .filter { prompts[it.name].isNullOrBlank() }
                 .associate { it.name to PromptTemplates.defaultFor(it) }
@@ -131,16 +156,17 @@ class SettingsRepository(
         )
     }
 
+    /**
+     * Atomic read-modify-write of the in-memory settings, then an ORDERED
+     * background persist. Synchronized because callers span Main and Default
+     * (a lost write loses a key cooldown -> a benched key gets hammered again).
+     */
     fun update(transform: (AppSettings) -> AppSettings) {
-        val next = transform(_settings.value)
-        _settings.value = next
-        persist(next)
-    }
-
-    private fun persist(doc: AppSettings) {
-        // writes are tiny and infrequent; commit off the main thread
-        ioScope.launch {
-            prefs.edit { putString(KEY_DOC, json.encodeToString(AppSettings.serializer(), doc)) }
+        val next = synchronized(updateLock) {
+            transform(_settings.value).also { _settings.value = it }
+        }
+        persistScope.launch {
+            prefs.edit { putString(KEY_DOC, json.encodeToString(AppSettings.serializer(), next)) }
         }
     }
 

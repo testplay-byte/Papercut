@@ -31,9 +31,11 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         val maskedSample: String?,
     )
 
+    // ALL providers incl. disabled ones — a disabled provider you cannot see
+    // can never be re-enabled (the local presets were unreachable this way)
     val providerRows: StateFlow<List<ProviderRow>> =
         settings.map { s ->
-            s.providers.filter { it.enabled }.map { p ->
+            s.providers.map { p ->
                 val keys = s.keys.filter { it.providerId == p.id }
                 ProviderRow(
                     provider = p,

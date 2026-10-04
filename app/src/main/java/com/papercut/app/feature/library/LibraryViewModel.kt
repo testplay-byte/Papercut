@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import com.papercut.app.AppContainer
 import com.papercut.app.core.data.DocumentRepository
 import com.papercut.app.core.data.model.DocumentSummary
-import com.papercut.app.core.data.model.ScanMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,7 +18,8 @@ enum class DocSort { RECENT, NAME }
 
 /**
  * Library state: folders (chips), documents in scope, search/sort, multi-select.
- * A single VM serves both the all-folders view and a folder-scoped view.
+ * A single VM serves both the all-folders home and a folder-scoped view —
+ * the active scope is remembered so batch actions can't escape it.
  */
 class LibraryViewModel(
     private val container: AppContainer,
@@ -31,6 +31,10 @@ class LibraryViewModel(
     private val _docs = MutableStateFlow<List<DocumentSummary>>(emptyList())
     private val _query = MutableStateFlow("")
     private val _sort = MutableStateFlow(DocSort.RECENT)
+
+    /** null = home (all folders). Kept in the VM so batch ops stay scoped. */
+    private val _scope = MutableStateFlow<String?>(null)
+    val scope: StateFlow<String?> = _scope.asStateFlow()
 
     val query: StateFlow<String> = _query.asStateFlow()
     val sort: StateFlow<DocSort> = _sort.asStateFlow()
@@ -45,8 +49,14 @@ class LibraryViewModel(
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** Folders matching the current search — chips shouldn't offer dead ends. */
+    val visibleFolders: StateFlow<List<DocumentRepository.FolderInfo>> =
+        combine(_folders, _query) { folders, q ->
+            if (q.isBlank()) folders else folders.filter { it.name.contains(q, ignoreCase = true) }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     // ---- multi-select ----
-    private val _selected = MutableStateFlow<Set<Pair<String, String>>>(emptySet()) // (folder,name)
+    private val _selected = MutableStateFlow<Set<Pair<String, String>>>(emptySet())
     val selected: StateFlow<Set<Pair<String, String>>> = _selected.asStateFlow()
     val selectionMode: StateFlow<Boolean> = _selected
         .map { it.isNotEmpty() }
@@ -62,23 +72,18 @@ class LibraryViewModel(
 
     // ---- data ----
 
-    /** Unsaved capture session (drafts survive navigation) — for the resume banner. */
-    val draftPages: StateFlow<Int> = container.drafts.pages
-        .map { it.size }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
-    val draftFolder: StateFlow<String?> = container.drafts.folder
-
-    fun discardDraft() = container.drafts.clear()
-
-    /** Load data on (re)enter; VM survives scope switch via key in appViewModel… */
-    fun load(scope: String?) = viewModelScope.launch {
-        _folders.value = container.docs.listFolders()
-        _docs.value = if (scope == null) {
-            _folders.value.flatMap { container.docs.listDocuments(it.name) }
-        } else {
-            container.docs.listDocuments(scope)
+    /** null scope = all folders. */
+    fun load(scope: String?) {
+        _scope.value = scope
+        viewModelScope.launch {
+            _folders.value = container.docs.listFolders()
+            _docs.value = if (scope == null) {
+                _folders.value.flatMap { container.docs.listDocuments(it.name) }
+            } else {
+                container.docs.listDocuments(scope)
+            }
+            _selected.value = emptySet()
         }
-        _selected.value = emptySet()
     }
 
     fun setQuery(q: String) { _query.value = q }
@@ -86,43 +91,53 @@ class LibraryViewModel(
 
     fun createFolder(name: String, onDone: (Boolean) -> Unit) = viewModelScope.launch {
         val ok = container.docs.createFolder(name)
-        if (ok) load(null) else container.messages.post("Could not create folder")
+        if (ok) load(_scope.value) else container.messages.post("Could not create folder")
         onDone(ok)
     }
 
     fun renameFolder(old: String, new: String) = viewModelScope.launch {
-        if (container.docs.renameFolder(old, new)) load(null)
+        if (container.docs.renameFolder(old, new)) load(_scope.value)
         else container.messages.post("Could not rename folder")
     }
 
     fun deleteFolder(name: String) = viewModelScope.launch {
-        if (container.docs.deleteFolder(name)) load(null)
-        else container.messages.post(if (name == DocumentRepository.DEFAULT_FOLDER)
-            "Default folder can't be deleted" else "Could not delete folder")
+        if (container.docs.deleteFolder(name)) load(_scope.value)
+        else container.messages.post(
+            if (name == DocumentRepository.DEFAULT_FOLDER) "Default folder can't be deleted"
+            else "Could not delete folder",
+        )
     }
 
     fun renameDocument(doc: DocumentSummary, newName: String) = viewModelScope.launch {
-        if (container.docs.renameDocument(doc.folder, doc.name, newName)) load(null)
-        else container.messages.post("Could not rename — legacy scans can't be renamed")
+        val ok = container.docs.renameDocument(doc.folder, doc.name, newName)
+        if (ok) {
+            container.queue.invalidateDocument(doc.folder, doc.name) // stale index-keyed badges
+            load(_scope.value)
+        } else {
+            container.messages.post(
+                if (doc.isLegacy) "Single scans can't be renamed"
+                else "Could not rename — that name is taken",
+            )
+        }
     }
 
     fun deleteDocument(doc: DocumentSummary) = viewModelScope.launch {
         container.queue.cancelDocument(doc.folder, doc.name)
-        if (container.docs.deleteDocument(doc)) load(null)
+        if (container.docs.deleteDocument(doc)) load(_scope.value)
         else container.messages.post("Could not delete")
     }
 
-    /** Digitize every not-yet-done page of the selected documents. */
-    fun digitizeSelected(scope: String?) = viewModelScope.launch {
+    /** Digitize every not-yet-done page of the selected docs, each in its own mode. */
+    fun digitizeSelected() = viewModelScope.launch {
         val targets = _docs.value.filter { (it.folder to it.name) in _selected.value }
         var submitted = 0
         targets.forEach { s ->
-            val pages = container.docs.getPages(s)
-            pages.filter { it.htmlUri == null }.forEach { p ->
-                container.queue.submit(p, ScanMode.TEXT); submitted++
+            container.docs.getPages(s).filter { it.htmlUri == null }.forEach { p ->
+                container.queue.submit(p, p.spec.aiMode)
+                submitted++
             }
         }
-        container.messages.post(if (submitted > 0) "$submitted page(s) queued" else "Nothing new to digitize")
+        container.messages.post(if (submitted > 0) "Queued $submitted page(s)" else "Nothing new to digitize")
         _selected.value = emptySet()
     }
 
@@ -133,8 +148,16 @@ class LibraryViewModel(
             container.docs.deleteDocument(s)
         }
         _selected.value = emptySet()
-        load(scope = null)
+        load(_scope.value) // stay in the folder the user is looking at
     }
+
+    /** Unsaved capture session (drafts survive navigation) — for the resume banner. */
+    val draftPages: StateFlow<Int> = container.drafts.pages
+        .map { it.size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+    val draftFolder: StateFlow<String?> = container.drafts.folder
+
+    fun discardDraft() = container.drafts.clear()
 
     /** Total pages queued/working right now for the live chip. */
     val queueActive: StateFlow<Int> = container.queue.statuses

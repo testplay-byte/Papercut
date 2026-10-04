@@ -113,8 +113,10 @@ fun DocumentScreen(
         )]?.message
     }
 
-    // twin-ready moment: flip to the digital view once per completed digitize
+    // twin-ready moment: flip to the digital view once per completed digitize.
+    // Page indexes shift on delete/reorder -> prune so shifted pages can flip too.
     val flippedFor = remember { mutableStateOf(setOf<Int>()) }
+    LaunchedEffect(pages.size, selected) { flippedFor.value = flippedFor.value.intersect(pages.indices.toSet()) }
     LaunchedEffect(statusMap, page?.spec?.index) {
         val p = page ?: return@LaunchedEffect
         if (status == ScanStatus.Done && p.spec.index !in flippedFor.value) {
@@ -339,10 +341,13 @@ fun DocumentScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    page?.let { vm.digitize(it, pickMode, feedback.ifBlank { null }) }
-                    feedback = ""; showFeedback = false; mode = ViewMode.PAGE
-                }) { Text("Run") }
+                TextButton(
+                    enabled = status != ScanStatus.Queued && status != ScanStatus.Processing,
+                    onClick = {
+                        page?.let { vm.digitize(it, pickMode, feedback.ifBlank { null }) }
+                        feedback = ""; showFeedback = false; mode = ViewMode.PAGE
+                    },
+                ) { Text("Run") }
             },
             dismissButton = { TextButton(onClick = { showFeedback = false }) { Text("Cancel") } },
         )
@@ -432,17 +437,53 @@ private fun HtmlStage(html: String?, backup: Boolean) {
         }
         return
     }
-    AndroidView(
-        factory = { ctx ->
-            WebView(ctx).apply {
-                settings.javaScriptEnabled = true
-                settings.allowFileAccess = false
-                setBackgroundColor(0xFF1A1A1A.toInt())
-            }
-        },
-        update = { it.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null) },
-        modifier = Modifier.fillMaxSize(),
-    )
+    // Twins are authored for a ~1080px page; without a wide viewport the text
+    // renders at ~7sp on a phone — the headline feature looked unreadable.
+    var zoomed by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxSize()) {
+        AndroidView(
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    settings.allowFileAccess = false
+                    settings.useWideViewPort = true
+                    settings.loadWithOverviewMode = true
+                    settings.builtInZoomControls = true
+                    settings.displayZoomControls = false
+                    setBackgroundColor(0xFF0E0E11.toInt())
+                }
+            },
+            update = { view ->
+                if (view.tag != html) {
+                    view.tag = html
+                    val withViewport = html.replaceFirst(
+                        Regex("<head>", RegexOption.IGNORE_CASE),
+                        "<head><meta name="viewport" content="width=1080, initial-scale=1">",
+                    )
+                    view.loadDataWithBaseURL(null, withViewport, "text/html", "UTF-8", null)
+                }
+                view.setZoomControlsShown(true)
+                if (zoomed) view.zoomBy(1.6f) else view.resetZoom()
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
+        val fitInter = remember { MutableInteractionSource() }
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(PaperGap.s)
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(PaperColors.NightTile)
+                .border(1.dp, PaperColors.TileBorder, CircleShape)
+                .pressScale(fitInter)
+                .tap(fitInter) { zoomed = !zoomed },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(if (zoomed) "1:1" else "Fit", color = PaperColors.NightInkSecondary, fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold)
+        }
+    }
 }
 
 @Composable
@@ -533,7 +574,7 @@ private fun ActionBtn(
         Icon(icon, null,
             tint = when {
                 !enabled -> PaperColors.InkFaint
-                active -> Color.White
+                active -> PaperColors.Canvas
                 else -> PaperColors.NightInk
             },
             modifier = Modifier.size(15.dp))
@@ -542,7 +583,7 @@ private fun ActionBtn(
             fontWeight = FontWeight.Medium,
             color = when {
                 !enabled -> PaperColors.InkFaint
-                active -> Color.White
+                active -> PaperColors.Canvas
                 else -> PaperColors.NightInk
             })
     }

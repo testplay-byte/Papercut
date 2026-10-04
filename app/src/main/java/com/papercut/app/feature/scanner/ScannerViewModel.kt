@@ -72,7 +72,13 @@ class ScannerViewModel(
         }
     }
 
-    fun removePage(index: Int) = drafts.removePage(index)
+    /** Remove a draft page with an UNDO path (a lost capture is unrecoverable). */
+    fun removePage(index: Int) {
+        val removed = drafts.removePage(index) ?: return
+        container.messages.postWithAction("Page removed", "Undo") {
+            drafts.restorePage(removed, index)
+        }
+    }
 
     fun discard() = drafts.clear()
 

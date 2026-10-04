@@ -42,6 +42,9 @@ class DocumentRepository(
 
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
 
+    /** Serializes every meta.json read-modify-write across the app. */
+    private val metaLock = kotlinx.coroutines.sync.Mutex()
+
     private val rootDir: DocumentFile?
         get() {
             val uri = settings.settings.value.rootFolderUri ?: return null
@@ -157,12 +160,18 @@ class DocumentRepository(
         }
     }
 
-    /** Read-modify-write meta.json. No-op for legacy docs (they auto-migrate on write). */
+    /** Read-modify-write meta.json under the meta lock. Legacy docs migrate first. */
     suspend fun updateMeta(folder: String, docName: String, transform: (DocumentMeta) -> DocumentMeta): Boolean =
         withContext(Dispatchers.IO) {
-            val dir = documentDir(folder, docName, create = false) ?: return@withContext false
-            val meta = readMeta(dir) ?: return@withContext false
-            writeMeta(dir, transform(meta))
+            if (!migrateLegacyIfNeeded(folder, docName)) return@withContext false
+            metaLock.lock()
+            try {
+                val dir = documentDir(folder, docName, create = false) ?: return@withContext false
+                val meta = readMeta(dir) ?: return@withContext false
+                writeMeta(dir, transform(meta))
+            } finally {
+                metaLock.unlock()
+            }
         }
 
     /** Ensure doc dir + meta exist; migrates a legacy single scan in place. */
@@ -180,28 +189,46 @@ class DocumentRepository(
         if (!alreadyHavePage) {
             img ?: return@withContext false
             val newImg = dir.createFile("image/jpeg", pageFile(1)) ?: return@withContext false
-            context.contentResolver.openInputStream(img.uri)?.use { input ->
-                context.contentResolver.openOutputStream(newImg.uri)?.use { output -> input.copyTo(output) }
-            } ?: return@withContext false
+            // verify the copy actually landed BEFORE deleting the original
+            val copied = try {
+                val ok = context.contentResolver.openInputStream(img.uri)?.use { input ->
+                    context.contentResolver.openOutputStream(newImg.uri)?.use { output -> input.copyTo(output) }
+                    true
+                } ?: false
+                ok && newImg.length() > 0
+            } catch (_: Exception) {
+                false
+            }
+            if (!copied) {
+                newImg.delete()
+                return@withContext false // original stays put — fully recoverable
+            }
         }
         val htmlOld = fDir.findFile("${docName}improve.html")
         if (htmlOld != null && dir.findFile(htmlFile(1)) == null) {
             dir.createFile("text/html", htmlFile(1))?.let { nh ->
-                context.contentResolver.openInputStream(htmlOld.uri)?.use { i ->
-                    context.contentResolver.openOutputStream(nh.uri)?.use { o -> i.copyTo(o) }
+                try {
+                    context.contentResolver.openInputStream(htmlOld.uri)?.use { i ->
+                        context.contentResolver.openOutputStream(nh.uri)?.use { o -> i.copyTo(o) }
+                    }
+                } catch (_: Exception) {
                 }
             }
         }
         val oldHtml = fDir.findFile("${docName}improve_old.html")
         if (oldHtml != null && dir.findFile(htmlBackupFile(1)) == null) {
             dir.createFile("text/html", htmlBackupFile(1))?.let { nh ->
-                context.contentResolver.openInputStream(oldHtml.uri)?.use { i ->
-                    context.contentResolver.openOutputStream(nh.uri)?.use { o -> i.copyTo(o) }
+                try {
+                    context.contentResolver.openInputStream(oldHtml.uri)?.use { i ->
+                        context.contentResolver.openOutputStream(nh.uri)?.use { o -> i.copyTo(o) }
+                    }
+                } catch (_: Exception) {
                 }
             }
         }
-        writeMeta(dir, DocumentMeta(docName, System.currentTimeMillis(),
+        val metaWritten = writeMeta(dir, DocumentMeta(docName, System.currentTimeMillis(),
             listOf(PageSpec(1, pageFile(1), filter = com.papercut.app.core.data.model.PageFilter.ORIGINAL))))
+        if (!metaWritten) return@withContext false // originals kept — retryable
         img?.delete()
         htmlOld?.delete()
         oldHtml?.delete()
@@ -288,52 +315,98 @@ class DocumentRepository(
 
     /**
      * Reorder pages by rewriting meta AND renaming every artifact (photo,
-     * twin, backup) to its new slot — photos alone would orphan twins.
+     * twin, backup) into its new slot — photos alone would orphan twins.
+     * Every rename is checked; any failure rolls pass 1 back so the document
+     * never rests in a half-renamed tmp-* state.
      */
     suspend fun setOrder(folder: String, docName: String, orderedIndexes: List<Int>): Boolean =
         withContext(Dispatchers.IO) {
-            val dir = documentDir(folder, docName) ?: return@withContext false
-            val meta = readMeta(dir) ?: return@withContext false
-            val byIdx = meta.pages.associateBy { it.index }
-            val specs = orderedIndexes.mapNotNull { byIdx[it] }
-            if (specs.size != meta.pages.size) return@withContext false
-            // pass 1: everything moves to position-keyed temp names
-            for ((i, p) in specs.withIndex()) {
-                if (dir.findFile(p.fileName)?.renameTo("tmp-$i.jpg") != true) return@withContext false
-                dir.findFile(htmlFile(p.index))?.renameTo("tmp-$i.html")
-                dir.findFile(htmlBackupFile(p.index))?.renameTo("tmp-$i.prev.html")
+            metaLock.lock()
+            try {
+                val dir = documentDir(folder, docName) ?: return@withContext false
+                val meta = readMeta(dir) ?: return@withContext false
+                val byIdx = meta.pages.associateBy { it.index }
+                val specs = orderedIndexes.mapNotNull { byIdx[it] }
+                if (specs.size != meta.pages.size) return@withContext false
+                cleanTmp(dir)
+
+                // pass 1 — everything to position-keyed temp names (targets are free)
+                val moved = ArrayList<Pair<String, String>>() // tmpName -> originalName
+                fun pass1(i: Int, p: PageSpec): Boolean {
+                    val jpg = dir.findFile(p.fileName) ?: return false
+                    if (!jpg.renameTo(tmpName(i, ".jpg"))) return false
+                    moved += tmpName(i, ".jpg") to p.fileName
+                    dir.findFile(htmlFile(p.index))?.let {
+                        if (!it.renameTo(tmpName(i, ".html"))) return false
+                        moved += tmpName(i, ".html") to htmlFile(p.index)
+                    }
+                    dir.findFile(htmlBackupFile(p.index))?.let {
+                        if (!it.renameTo(tmpName(i, ".prev.html"))) return false
+                        moved += tmpName(i, ".prev.html") to htmlBackupFile(p.index)
+                    }
+                    return true
+                }
+                for ((i, p) in specs.withIndex()) {
+                    if (!pass1(i, p)) return@withContext rollback(dir, moved)
+                }
+
+                // pass 2 — temps into final 1-based slots (all vacated by pass 1)
+                val newPages = ArrayList<PageSpec>()
+                for ((i, p) in specs.withIndex()) {
+                    val slot = pageFile(i + 1)
+                    if (!dir.findFile(tmpName(i, ".jpg"))?.renameTo(slot).orFalse()) return@withContext false
+                    dir.findFile(tmpName(i, ".html"))?.renameTo(htmlFile(i + 1))
+                    dir.findFile(tmpName(i, ".prev.html"))?.renameTo(htmlBackupFile(i + 1))
+                    newPages += p.copy(index = i + 1, fileName = slot)
+                }
+                writeMeta(dir, meta.copy(pages = newPages))
+            } finally {
+                metaLock.unlock()
             }
-            // pass 2: temps into final 1-based slots
-            val newPages = specs.mapIndexed { i, p ->
-                if (dir.findFile("tmp-$i.jpg")?.renameTo(pageFile(i + 1)) != true) return@withContext false
-                dir.findFile("tmp-$i.html")?.renameTo(htmlFile(i + 1))
-                dir.findFile("tmp-$i.prev.html")?.renameTo(htmlBackupFile(i + 1))
-                p.copy(index = i + 1, fileName = pageFile(i + 1))
-            }
-            writeMeta(dir, meta.copy(pages = newPages))
         }
+
+    private fun tmpName(i: Int, ext: String) = "tmp-$i$ext"
+
+    private fun Boolean?.orFalse() = this == true
+
+    /** Remove any leftovers from an interrupted reorder (self-heal). */
+    private fun cleanTmp(dir: DocumentFile) {
+        dir.listFiles().filter { it.name?.startsWith("tmp-") == true }.forEach { it.delete() }
+    }
+
+    /** Undo pass 1 of a failed reorder so nothing is stranded as tmp-*. */
+    private fun rollback(dir: DocumentFile, moved: List<Pair<String, String>>): Boolean {
+        moved.forEach { (tmp, original) -> dir.findFile(tmp)?.renameTo(original) }
+        cleanTmp(dir)
+        return false
+    }
 
     suspend fun deletePage(folder: String, docName: String, pageIndex: Int): Boolean =
         withContext(Dispatchers.IO) {
-            val dir = documentDir(folder, docName) ?: return@withContext false
-            val meta = readMeta(dir) ?: return@withContext false
-            val doomed = meta.pages.find { it.index == pageIndex } ?: return@withContext false
-            dir.findFile(doomed.fileName)?.delete()
-            dir.findFile(htmlFile(pageIndex))?.delete()
-            dir.findFile(htmlBackupFile(pageIndex))?.delete()
-            // shift each remaining page's photo + twin + backup into its new slot
-            val remaining = meta.pages.filter { it.index != pageIndex }.sortedBy { it.index }
-            for ((i, p) in remaining.withIndex()) {
-                val newSlot = i + 1
-                if (p.index != newSlot) {
-                    dir.findFile(p.fileName)?.renameTo(pageFile(newSlot))
-                    dir.findFile(htmlFile(p.index))?.renameTo(htmlFile(newSlot))
-                    dir.findFile(htmlBackupFile(p.index))?.renameTo(htmlBackupFile(newSlot))
+            metaLock.lock()
+            try {
+                val dir = documentDir(folder, docName) ?: return@withContext false
+                val meta = readMeta(dir) ?: return@withContext false
+                val doomed = meta.pages.find { it.index == pageIndex } ?: return@withContext false
+                dir.findFile(doomed.fileName)?.delete()
+                dir.findFile(htmlFile(pageIndex))?.delete()
+                dir.findFile(htmlBackupFile(pageIndex))?.delete()
+                // shift each remaining page's photo + twin + backup into its new slot
+                val remaining = meta.pages.filter { it.index != pageIndex }.sortedBy { it.index }
+                for ((i, p) in remaining.withIndex()) {
+                    val newSlot = i + 1
+                    if (p.index != newSlot) {
+                        dir.findFile(p.fileName)?.renameTo(pageFile(newSlot))
+                        dir.findFile(htmlFile(p.index))?.renameTo(htmlFile(newSlot))
+                        dir.findFile(htmlBackupFile(p.index))?.renameTo(htmlBackupFile(newSlot))
+                    }
                 }
+                writeMeta(dir, meta.copy(
+                    pages = remaining.mapIndexed { i, p -> p.copy(index = i + 1, fileName = pageFile(i + 1)) },
+                ))
+            } finally {
+                metaLock.unlock()
             }
-            writeMeta(dir, meta.copy(
-                pages = remaining.mapIndexed { i, p -> p.copy(index = i + 1, fileName = pageFile(i + 1)) },
-            ))
         }
 
     suspend fun deleteDocument(doc: DocumentSummary): Boolean = withContext(Dispatchers.IO) {
@@ -350,41 +423,59 @@ class DocumentRepository(
 
     suspend fun renameDocument(folder: String, old: String, new: String): Boolean = withContext(Dispatchers.IO) {
         val fDir = folderDir(folder) ?: return@withContext false
-        if (new.isBlank() || new == old || fDir.findFile(new) != null) return@withContext false
         val safe = sanitizeName(new)
-        val doc = fDir.findFile(old) ?: fDir.findFile("$old.jpg")?.let { null } ?: return@withContext false
-        if (doc.isDirectory) {
+        if (safe.isBlank() || safe == old || fDir.findFile(safe) != null) return@withContext false
+        val doc = fDir.findFile(old)?.takeIf { it.isDirectory } ?: return@withContext false
+        metaLock.lock()
+        try {
             val ok = doc.renameTo(safe)
             if (ok) documentDir(folder, safe)?.let { d -> readMeta(d)?.let { writeMeta(d, it.copy(name = safe)) } }
             ok
-        } else false // legacy rename unsupported (name IS the file stem); keep simple
+        } finally {
+            metaLock.unlock()
+        }
     }
 
     // ---------------- AI results per page ----------------
 
-    /** Write AI html for a page, demoting current to backup. Works for legacy via migration. */
+    /**
+     * Write AI html for a page, demoting current to backup. Works for legacy
+     * via migration. Resolves the slot by PHOTO IDENTITY (file name), never by
+     * position — a twin landing on someone else's page is unrecoverable.
+     */
     suspend fun savePageHtml(page: PageView, html: String): Boolean = withContext(Dispatchers.IO) {
-        if (page.docName.isNotEmpty() && page.spec.fileName.endsWith(".jpg")) {
-            if (!migrateLegacyIfNeeded(page.folder, page.docName)) return@withContext false
-        }
-        val dir = documentDir(page.folder, page.docName) ?: return@withContext false
-        // re-read migrated meta; resolve slot by FILE NAME (identity travels
-        // through reorder/delete renames) falling back to index
-        val meta = readMeta(dir) ?: return@withContext false
-        val slot = meta.pages.find { it.fileName == page.spec.fileName }?.index
-            ?: meta.pages.find { it.index == page.spec.index }?.index
-            ?: meta.pages.firstOrNull()?.index ?: return@withContext false
-        dir.findFile(htmlBackupFile(slot))?.delete()
-        dir.findFile(htmlFile(slot))?.renameTo(htmlBackupFile(slot))
-        val file = dir.createFile("text/html", htmlFile(slot)) ?: return@withContext false
+        if (!migrateLegacyIfNeeded(page.folder, page.docName)) return@withContext false
+        metaLock.lock()
         try {
-            context.contentResolver.openOutputStream(file.uri)?.use { stream ->
-                OutputStreamWriter(stream).use { it.write(html) }
+            val dir = documentDir(page.folder, page.docName) ?: return@withContext false
+            val meta = readMeta(dir) ?: return@withContext false
+            val target = meta.pages.find { it.fileName == page.spec.fileName }
+                ?: meta.pages.find { it.index == page.spec.index }
+                ?: return@withContext false // page vanished (deleted mid-flight) — do not guess
+            val slot = target.index
+            // 1. write the new twin to a temp file (createFile with a TAKEN name
+            //    dedupes on SAF, which would orphan the old twin's slot)
+            val tmp = dir.createFile("text/html", "tmp-twin.html") ?: return@withContext false
+            val written = try {
+                context.contentResolver.openOutputStream(tmp.uri)?.use { stream ->
+                    OutputStreamWriter(stream).use { it.write(html) }
+                }
+                true
+            } catch (_: Exception) {
+                false
             }
-            true
-        } catch (_: Exception) {
-            file.delete()
-            false
+            if (!written) { tmp.delete(); return@withContext false }
+            // 2. only now demote the previous twin, then swap the new one in
+            dir.findFile(htmlBackupFile(slot))?.delete()
+            dir.findFile(htmlFile(slot))?.let { cur ->
+                val backup = dir.createFile("text/html", htmlBackupFile(slot))
+                if (backup != null) cur.renameTo(htmlBackupFile(slot)) else cur.delete()
+            }
+            val swapped = tmp.renameTo(htmlFile(slot))
+            if (!swapped) tmp.delete()
+            swapped
+        } finally {
+            metaLock.unlock()
         }
     }
 
@@ -430,14 +521,26 @@ class DocumentRepository(
     }
 
     private fun writeMeta(dir: DocumentFile, meta: DocumentMeta): Boolean {
-        val existing = dir.findFile(META_FILE)
-        existing?.delete()
-        val file = dir.createFile("application/json", META_FILE) ?: return false
+        // Write IN PLACE (truncating stream). delete-then-create left a window
+        // where a crash erased meta.json entirely — the document vanished from
+        // the library with every page still on disk.
+        val payload = try {
+            json.encodeToString(DocumentMeta.serializer(), meta)
+        } catch (_: Exception) {
+            return false
+        }
         return try {
-            context.contentResolver.openOutputStream(file.uri)?.use { stream ->
-                OutputStreamWriter(stream).use { it.write(json.encodeToString(DocumentMeta.serializer(), meta)) }
+            val existing = dir.findFile(META_FILE)
+            if (existing != null) {
+                context.contentResolver.openOutputStream(existing.uri, "wt")?.use { stream ->
+                    OutputStreamWriter(stream).use { it.write(payload) }
+                } != null
+            } else {
+                val file = dir.createFile("application/json", META_FILE) ?: return false
+                context.contentResolver.openOutputStream(file.uri)?.use { stream ->
+                    OutputStreamWriter(stream).use { it.write(payload) }
+                } != null
             }
-            true
         } catch (_: Exception) {
             false
         }
@@ -453,5 +556,5 @@ class DocumentRepository(
     }
 
     private fun sanitizeName(raw: String): String =
-        raw.trim().replace(Regex("[/\\\\:*?\"<>|]"), "_").take(80).ifBlank { "Scan" }
+        raw.trim().replace(Regex("[/\\\\:*?\"<>|#\\u0000-\\u001F]"), "_").take(80).ifBlank { "Scan" }
 }

@@ -1,6 +1,5 @@
 package com.papercut.app.core.data
 
-import android.graphics.Bitmap
 import android.os.Environment
 import java.io.ByteArrayOutputStream
 
@@ -14,20 +13,34 @@ import java.io.ByteArrayOutputStream
  */
 object PdfExporter {
 
-    /** Build an in-memory PDF from rendered page bitmaps (RGB JPEGs embedded). */
-    fun build(pageBitmaps: List<Bitmap>): ByteArray {
-        require(pageBitmaps.isNotEmpty()) { "PDF needs at least one page" }
+    /** One pre-encoded page: JPEG bytes + pixel dimensions. */
+    data class EncodedPage(val jpeg: ByteArray, val widthPx: Int, val heightPx: Int)
 
-        // encode first, then write — we need byte sizes for dicts
-        val encoded = pageBitmaps.map { bmp ->
-            val scaled = fitMax(bmp, 2400)
-            val w = scaled.width
-            val h = scaled.height
-            val out = ByteArrayOutputStream(512 * 1024)
-            scaled.compress(Bitmap.CompressFormat.JPEG, 85, out)
-            if (scaled !== bmp) scaled.recycle()
-            Encoded(out.toByteArray(), w, h)
-        }
+    /** Encode a bitmap as an [EncodedPage] without keeping the bitmap alive. */
+    fun encodePage(bmp: android.graphics.Bitmap, maxSide: Int = 2000): EncodedPage {
+        val longest = maxOf(bmp.width, bmp.height)
+        val scaled = if (longest <= maxSide) bmp
+        else android.graphics.Bitmap.createScaledBitmap(
+            bmp,
+            (bmp.width * maxSide / longest).coerceAtLeast(1),
+            (bmp.height * maxSide / longest).coerceAtLeast(1),
+            true,
+        )
+        val w = scaled.width
+        val h = scaled.height
+        val out = java.io.ByteArrayOutputStream(512 * 1024)
+        scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, out)
+        if (scaled !== bmp) scaled.recycle()
+        return EncodedPage(out.toByteArray(), w, h)
+    }
+
+    /**
+     * Build an in-memory PDF from PRE-ENCODED pages (JPEG bytes). Callers
+     * encode one page at a time and recycle the bitmap immediately — holding
+     * every page as a bitmap (≈6 MB each) OOMs on long documents.
+     */
+    fun build(encoded: List<EncodedPage>): ByteArray {
+        require(encoded.isNotEmpty()) { "PDF needs at least one page" }
 
         val out = ByteArrayOutputStream(2 * 1024 * 1024)
         val offsets = HashMap<Int, Int>() // object id -> byte offset
@@ -41,7 +54,7 @@ object PdfExporter {
         // kids list for the page tree
         val kids = encoded.indices.joinToString(" ") { "${3 + it * 3} 0 R" }
 
-        // catalog + page tree first (ids 1,2) so MediaBox math below can reference them
+        // catalog + page tree (ids 1,2) first so /Root resolves
         beginObj(1); writeString("<< /Type /Catalog /Pages 2 0 R >>\n"); endObj()
         beginObj(2); writeString("<< /Type /Pages /Count ${encoded.size} /Kids [$kids] >>\n"); endObj()
 
@@ -88,25 +101,10 @@ object PdfExporter {
         return out.toByteArray()
     }
 
-    private data class Encoded(val jpeg: ByteArray, val widthPx: Int, val heightPx: Int)
-
-    /** Page canvas in points: A4 long edge 842pt, short side follows the image aspect. */
     private fun mediaBox(pxW: Int, pxH: Int): Pair<Int, Int> {
         val ar = pxW.toFloat() / pxH.coerceAtLeast(1)
         return if (ar >= 1f) 842 to (842f / ar).toInt().coerceAtLeast(1)
         else (842f * ar).toInt().coerceAtLeast(1) to 842
-    }
-
-    private fun fitMax(bmp: Bitmap, maxSide: Int): Bitmap {
-        val longest = maxOf(bmp.width, bmp.height)
-        if (longest <= maxSide) return bmp
-        val r = maxSide.toFloat() / longest
-        return Bitmap.createScaledBitmap(
-            bmp,
-            (bmp.width * r).toInt().coerceAtLeast(1),
-            (bmp.height * r).toInt().coerceAtLeast(1),
-            true,
-        )
     }
 
     /**
@@ -117,7 +115,8 @@ object PdfExporter {
         val values = android.content.ContentValues().apply {
             put(android.provider.MediaStore.Files.FileColumns.DISPLAY_NAME, "$title.pdf")
             put(android.provider.MediaStore.Files.FileColumns.MIME_TYPE, "application/pdf")
-            put(android.provider.MediaStore.Files.FileColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            put(android.provider.MediaStore.Files.FileColumns.RELATIVE_PATH,
+                Environment.DIRECTORY_DOWNLOADS + "/Papercut")
             put(android.provider.MediaStore.Files.FileColumns.IS_PENDING, 1)
         }
         // API 29+: MediaStore Downloads (no permission needed, visible in Files).

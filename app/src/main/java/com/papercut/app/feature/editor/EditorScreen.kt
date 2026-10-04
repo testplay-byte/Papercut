@@ -140,7 +140,9 @@ fun EditorScreen(draftIndex: Int, onBack: () -> Unit) {
                 val rendered = remember(s.quad, s.rotation, s.filter, s.bitmap) {
                     PagePipeline.render(s.bitmap, PageSpec(1, "", s.quad, s.rotation, s.filter))
                 }
-                DisposableEffect(rendered) { onDispose { if (rendered !== s.bitmap) rendered.recycle() } }
+                // derived bitmaps are dropped, never recycled — the outgoing
+                // frame may still reference them ("recycled bitmap" crash)
+                DisposableEffect(rendered) { onDispose { } }
                 Image(bitmap = rendered.asImageBitmap(), contentDescription = "corrected",
                     contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
             } else {
@@ -206,7 +208,7 @@ private fun CropStage(
             android.graphics.Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, m, true)
         }
     }
-    DisposableEffect(base) { onDispose { if (base !== bitmap) base.recycle() } }
+    DisposableEffect(base) { onDispose { } } // dropped, not recycled (see preview above)
 
     var dragIndex by remember { mutableIntStateOf(-1) }
 
@@ -236,7 +238,7 @@ private fun CropStage(
                             dragIndex = currentQuad.corners()
                                 .mapIndexed { i, c -> i to n2p(c.first, c.second) }
                                 .minByOrNull { (_, p) -> (p - start).getDistance() }
-                                ?.takeIf { (_, p) -> (p - start).getDistance() < 120f }
+                                ?.takeIf { (_, p) -> (p - start).getDistance() < 44.dp.toPx() }
                                 ?.first ?: -1
                         },
                         onDrag = { change, _ ->
@@ -257,6 +259,10 @@ private fun CropStage(
                 dstSize = androidx.compose.ui.unit.IntSize(drawW.toInt(), drawH.toInt()),
             )
 
+            // dp-sized handles: raw px made them ~7dp on a 3x phone
+            val handleR = 14.dp.toPx()
+            val knobR = 9.dp.toPx()
+            val strokeW = 2.5.dp.toPx()
             val corners = quad.corners().map { n2p(it.first, it.second) }
 
             // dim everything OUTSIDE the crop quad: one even-odd path = frame + quad
@@ -282,11 +288,11 @@ private fun CropStage(
                 lineTo(corners[3].x, corners[3].y)
                 close()
             }
-            drawPath(quadPath, edge, style = Stroke(width = 4f, cap = StrokeCap.Round))
+            drawPath(quadPath, edge, style = Stroke(width = strokeW, cap = StrokeCap.Round))
 
             corners.forEachIndexed { i, c ->
-                drawCircle(if (i == dragIndex) edge else Color.White, radius = 20f, center = c)
-                if (i != dragIndex) drawCircle(edge, radius = 13f, center = c)
+                drawCircle(if (i == dragIndex) edge else Color.White, radius = handleR, center = c)
+                if (i != dragIndex) drawCircle(edge, radius = knobR, center = c)
             }
         }
     }

@@ -54,6 +54,7 @@ import com.papercut.app.di.appViewModel
  */
 @Composable
 fun SettingsScreen(
+    onBack: () -> Unit,
     onOpenProvider: (String) -> Unit,
     onOpenPrompts: () -> Unit,
 ) {
@@ -74,7 +75,30 @@ fun SettingsScreen(
         contentPadding = PaddingValues(PaperGap.l),
         verticalArrangement = Arrangement.spacedBy(PaperGap.m),
     ) {
-        item { ScreenHeader("Settings", "Papercut v${BuildConfig.VERSION_NAME}") }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val backInter = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                Box(
+                    modifier = Modifier.size(40.dp).pressScale(backInter)
+                        .clip(RoundedCornerShape(PaperRadii.small))
+                        .background(PaperColors.Tile)
+                        .tap(backInter, onBack),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = PaperColors.Ink,
+                        modifier = Modifier.size(18.dp))
+                }
+                Column(modifier = Modifier.padding(start = PaperGap.m)) {
+                    Text("Settings", style = MaterialTheme.typography.titleLarge,
+                        color = PaperColors.Ink, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Text("Papercut v${BuildConfig.VERSION_NAME}", fontSize = 12.sp,
+                        color = PaperColors.InkSecondary)
+                }
+            }
+        }
 
         // AI providers tile-grid: one tile per enabled provider
         item {
@@ -83,8 +107,9 @@ fun SettingsScreen(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(PaperGap.s)) {
                 rows.forEach { row ->
+                    val on = row.provider.enabled
                     BentoTile(
-                        selected = row.isActive,
+                        selected = row.isActive && on,
                         onClick = { onOpenProvider(row.provider.id) },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
@@ -93,14 +118,18 @@ fun SettingsScreen(
                                 Text(
                                     row.provider.name,
                                     style = MaterialTheme.typography.titleMedium,
-                                    color = PaperColors.Ink,
+                                    color = if (on) PaperColors.Ink else PaperColors.InkFaint,
                                 )
                                 StatCaption(
-                                    if (row.keyCount == 0) "no keys yet"
-                                    else "${row.keyCount} key(s) · ${row.maskedSample ?: ""}"
+                                    when {
+                                        !on -> "disabled"
+                                        row.provider.requiresKey.not() -> "no key needed · edit URL"
+                                        row.keyCount == 0 -> "no keys yet"
+                                        else -> "${row.keyCount} key(s) · ${row.maskedSample ?: ""}"
+                                    }
                                 )
                             }
-                            if (row.isActive) {
+                            if (row.isActive && on) {
                                 Text(
                                     "ACTIVE",
                                     color = PaperColors.Accent,
@@ -108,6 +137,10 @@ fun SettingsScreen(
                                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                                 )
                             }
+                            SmoothSwitch(
+                                checked = on,
+                                onCheckedChange = { vm.toggleProvider(row.provider.id) },
+                            )
                         }
                     }
                 }

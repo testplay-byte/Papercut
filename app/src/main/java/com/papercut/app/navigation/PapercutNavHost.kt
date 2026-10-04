@@ -158,6 +158,7 @@ fun PapercutNavHost(
             }
             composable(Route.Settings.path) {
                 SettingsScreen(
+                    onBack = { navController.popBackStack() },
                     onOpenProvider = { id -> navController.navigate(Route.ProviderSettings(id).path) },
                     onOpenPrompts = { navController.navigate(Route.Prompts.path) },
                 )

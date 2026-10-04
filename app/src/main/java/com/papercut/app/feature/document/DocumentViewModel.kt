@@ -50,11 +50,15 @@ class DocumentViewModel(
     private val _busy = MutableStateFlow<String?>(null) // export progress label
     val busy: StateFlow<String?> = _busy.asStateFlow()
 
-    // ---- render cache: pageIndex -> bitmap (edited view). ----
-    // Entries are DROPPED, never recycled: composables hold references and a
-    // recycle on eviction/refresh would crash the next draw ("recycled bitmap").
-    // GC reclaims the native pixels; the cap keeps a handful of warm pages.
+    /**
+     * Render cache: pageIndex -> rendered bitmap. Synchronized because reads
+     * come from the UI thread (renderPage) and writes from Default (export).
+     * Entries are DROPPED, never recycled — composables still hold references,
+     * and a recycle during draw is an instant crash.
+     */
     private val renderCache = LinkedHashMap<Int, Bitmap>()
+    /** Bumped on every refresh(); a render from an older generation is discarded. */
+    @Volatile private var renderGeneration = 0
 
     init { refresh() }
 
@@ -63,27 +67,33 @@ class DocumentViewModel(
         val summary = summaries.find { it.name == docName }
         if (summary == null) { _ui.value = Ui.NotFound; return@launch }
         val pages = container.docs.getPages(summary)
-        renderCache.clear()
+        synchronized(renderCache) { renderCache.clear(); renderGeneration++ }
+        // page indexes shift on delete/reorder — badges are keyed by index, so
+        // drop this document's queue statuses rather than showing them on the
+        // wrong page
+        container.queue.invalidateDocument(folderName, docName)
         _ui.value = Ui.Ready(pages)
     }
 
     /** Rendered (crop+rotate+filter) bitmap for a page — cached. Treat as read-only. */
     suspend fun renderPage(page: PageView): Bitmap? = withContext(Dispatchers.Default) {
-        renderCache[page.spec.index]?.let { return@withContext it }
+        synchronized(renderCache) { renderCache[page.spec.index] }?.let { return@withContext it }
         val raw = decodeSampled(page.imageUri, 1800) ?: return@withContext null
         val out = com.papercut.app.core.data.PagePipeline.render(raw, page.spec)
-        putCache(page.spec.index, out)
+        if (out !== raw) raw.recycle()
+        val gen = renderGeneration
+        synchronized(renderCache) {
+            if (renderGeneration == gen) {
+                renderCache[page.spec.index] = out
+                while (renderCache.size > 5) renderCache.remove(renderCache.keys.first())
+            }
+        }
         out
     }
 
     /** Small poster for thumbnails/filmstrip (cheap decode, no edits). */
     suspend fun thumbnail(page: PageView): Bitmap? = withContext(Dispatchers.Default) {
         decodeSampled(page.imageUri, 240)
-    }
-
-    private fun putCache(index: Int, bmp: Bitmap) {
-        renderCache[index] = bmp
-        while (renderCache.size > 5) renderCache.remove(renderCache.keys.first())
     }
 
     private suspend fun decodeSampled(uriStr: String, maxSide: Int): Bitmap? =
@@ -157,8 +167,10 @@ class DocumentViewModel(
         if (pos == -1 || pos == to) return@launch
         order.add(to, order.removeAt(pos))
         if (container.docs.setOrder(folderName, docName, order)) {
-            container.messages.post("Page $from → ${to + 1}")
+            container.messages.post("Moved to page ${to + 1}")
             refresh()
+        } else {
+            container.messages.post("Could not move that page")
         }
     }
 
@@ -168,11 +180,17 @@ class DocumentViewModel(
         else container.messages.post("Could not delete page")
     }
 
-    /** Save one rotated edit on an existing doc page (used by page quick-rotate). */
+    /**
+     * Quick-rotate a saved page. The crop quad is authored in the ROTATED
+     * frame, so it must rotate with the page — otherwise the corner crop
+     * silently lands on the wrong edges after a hub rotate.
+     */
     fun rotatePage(page: PageView) = viewModelScope.launch {
         val ok = container.docs.updateMeta(folderName, docName) { meta ->
             meta.copy(pages = meta.pages.map {
-                if (it.index == page.spec.index) it.copy(rotation = (it.rotation + 90) % 360) else it
+                if (it.index == page.spec.index)
+                    it.copy(rotation = (it.rotation + 90) % 360, quad = it.quad?.rotated90())
+                else it
             })
         }
         if (ok) refresh() else container.messages.post("Could not rotate page")
@@ -195,19 +213,25 @@ class DocumentViewModel(
         _busy.value = "Building PDF…"
         val uri = withContext(Dispatchers.Default) {
             try {
-                val bitmaps = pages.mapNotNull { p ->
-                    // flattenForPdf returns a NEW opaque bitmap (never the
-                    // cached render) — safe to recycle after the PDF is built
-                    renderPage(p)?.let { com.papercut.app.core.data.PagePipeline.flattenForPdf(it) }
+                // encode page-by-page and recycle immediately: holding every page
+                // as a bitmap (~6 MB each) OOMs on long documents
+                val encoded = ArrayList<PdfExporter.EncodedPage>(pages.size)
+                for (p in pages) {
+                    val flat = renderPage(p)?.let {
+                        com.papercut.app.core.data.PagePipeline.flattenForPdf(it)
+                    }
+                    if (flat != null) {
+                        encoded += PdfExporter.encodePage(flat)
+                        flat.recycle()
+                    }
                 }
-                if (bitmaps.isEmpty()) null
-                else {
-                    val bytes = PdfExporter.build(bitmaps)
-                    bitmaps.forEach { runCatching { it.recycle() } }
-                    val ctx = container.appContext
-                    if (share) PdfExporter.cacheForShare(ctx, bytes, docName)
-                    else PdfExporter.saveToDownloads(ctx, bytes, docName)
-                }
+                if (encoded.isEmpty()) return@withContext null
+                val bytes = PdfExporter.build(encoded)
+                val ctx = container.appContext
+                if (share) PdfExporter.cacheForShare(ctx, bytes, docName)
+                else PdfExporter.saveToDownloads(ctx, bytes, docName)
+            } catch (e: OutOfMemoryError) {
+                null
             } catch (_: Exception) {
                 null
             }
@@ -215,7 +239,11 @@ class DocumentViewModel(
         _busy.value = null
         onUri(uri)
         container.messages.post(
-            if (uri != null) "PDF ready — Downloads/Papercut" else "PDF export failed",
+            when {
+                uri != null && share -> "PDF ready to share"
+                uri != null -> "PDF ready — Downloads/Papercut"
+                else -> "PDF export failed — try fewer pages"
+            },
         )
     }
 

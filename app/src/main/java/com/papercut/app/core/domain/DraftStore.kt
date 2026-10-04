@@ -57,12 +57,25 @@ class DraftStore {
         }
     }
 
-    fun removePage(index: Int) {
+    /**
+     * Removing a page deliberately does NOT recycle its bitmap: the draft rail
+     * may still be drawing it this frame, and a recycle there crashes Compose
+     * ("trying to use a recycled bitmap"). GC reclaims it right after.
+     * Returns the removed page so callers can offer an undo.
+     */
+    fun removePage(index: Int): DraftPage? {
         val list = _pages.value.toMutableList()
-        if (index in list.indices) {
-            list.removeAt(index).bitmap.recycle()
-            _pages.value = list
-        }
+        if (index !in list.indices) return null
+        val removed = list.removeAt(index)
+        _pages.value = list
+        return removed
+    }
+
+    /** Put a previously removed page back at its slot (undo). */
+    fun restorePage(page: DraftPage, index: Int) {
+        val list = _pages.value.toMutableList()
+        list.add(index.coerceIn(0, list.size), page)
+        _pages.value = list
     }
 
     fun movePage(from: Int, to: Int) {
@@ -73,9 +86,9 @@ class DraftStore {
         }
     }
 
-    /** Full wipe (recycles bitmaps) — used after save or explicit discard. */
+    /** Full wipe — bitmaps are dropped (not recycled) so any UI still drawing
+     *  them this frame stays safe; GC handles the pixels. */
     fun clear() {
-        _pages.value.forEach { it.bitmap.recycle() }
         _pages.value = emptyList()
         _name.value = ""
         _folder.value = null

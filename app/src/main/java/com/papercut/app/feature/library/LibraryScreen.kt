@@ -56,7 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import com.papercut.app.core.data.DocumentRepository
 import com.papercut.app.core.data.model.DocumentSummary
 import com.papercut.app.core.design.BentoTile
@@ -85,7 +85,7 @@ fun LibraryScreen(
     onBack: (() -> Unit)? = null,
 ) {
     val vm: LibraryViewModel = appViewModel { c -> LibraryViewModel(c) }
-    val folders by vm.folders.collectAsState()
+    val folders by vm.visibleFolders.collectAsState()
     val docs by vm.visibleDocs.collectAsState()
     val query by vm.query.collectAsState()
     val sort by vm.sort.collectAsState()
@@ -94,6 +94,7 @@ fun LibraryScreen(
 
     var showCreateFolder by remember { mutableStateOf(false) }
     var manageTarget by remember { mutableStateOf<DocumentSummary?>(null) }
+    var manageFolder by remember { mutableStateOf<String?>(null) }
     var confirmDeleteSelection by remember { mutableStateOf(false) }
 
     LaunchedEffectRefresh(vm, scope)
@@ -160,7 +161,7 @@ fun LibraryScreen(
                     .clip(RoundedCornerShape(PaperRadii.small))
                     .background(PaperColors.AccentSoft)
                     .border(1.dp, PaperColors.Accent.copy(alpha = 0.5f), RoundedCornerShape(PaperRadii.small))
-                    .tap(ri) { onScanNew() }
+                    .tap(ri) { draftFolder?.let { onOpenFolder(it) } ?: onScanNew() }
                     .padding(horizontal = PaperGap.m, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(PaperGap.s),
@@ -232,32 +233,42 @@ fun LibraryScreen(
             }
         }
 
-        // ---------- folder chips (home only) ----------
-        if (scope == null) {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(horizontal = PaperGap.l),
-                modifier = Modifier.fillMaxWidth().padding(bottom = PaperGap.s),
-            ) {
-                lazyItems(listOf("All") + folders.map { it.name }, key = { it }) { f ->
-                    FolderChip(
-                        label = f,
-                        count = if (f == "All") folders.sumOf { it.docCount }
-                        else folders.find { it.name == f }?.docCount ?: 0,
-                        selected = false,
-                        onClick = { if (f != "All") onOpenFolder(f) },
-                    )
-                }
-                item {
-                    val ni = remember { MutableInteractionSource() }
-                    Box(
-                        modifier = Modifier
-                            .pressScale(ni)
-                            .clip(RoundedCornerShape(PaperRadii.pill))
-                            .border(1.dp, PaperColors.TileBorder, RoundedCornerShape(PaperRadii.pill))
-                            .tap(ni) { showCreateFolder = true }
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                    ) { Icon(Icons.Filled.Add, "New folder", tint = PaperColors.Accent, modifier = Modifier.size(16.dp)) }
+        // ---------- folder chips (shown in both scopes; long-press manages) ----------
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(horizontal = PaperGap.l),
+            modifier = Modifier.fillMaxWidth().padding(bottom = PaperGap.s),
+        ) {
+            lazyItems(listOf("All") + folders.map { it.name }, key = { it }) { f ->
+                FolderChip(
+                    label = f,
+                    count = if (f == "All") folders.sumOf { it.docCount }
+                    else folders.find { it.name == f }?.docCount ?: 0,
+                    selected = if (scope == null) f == "All" else f == scope,
+                    onClick = {
+                        if (f == "All") {
+                            if (scope != null) onBack?.invoke() // home is the "All" view
+                        } else if (f != scope) {
+                            onOpenFolder(f)
+                        }
+                    },
+                    onLongPress = { if (f != "All") manageFolder = f },
+                )
+            }
+            item {
+                val ni = remember { MutableInteractionSource() }
+                Row(
+                    modifier = Modifier
+                        .pressScale(ni)
+                        .clip(RoundedCornerShape(PaperRadii.pill))
+                        .border(1.dp, PaperColors.Accent.copy(alpha = 0.5f), RoundedCornerShape(PaperRadii.pill))
+                        .tap(ni) { showCreateFolder = true }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(Icons.Filled.Add, null, tint = PaperColors.Accent, modifier = Modifier.size(14.dp))
+                    Text("New", color = PaperColors.Accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -276,13 +287,13 @@ fun LibraryScreen(
                 Row(
                     modifier = Modifier.pressScale(di)
                         .background(PaperColors.Accent, RoundedCornerShape(PaperRadii.pill))
-                        .tap(di) { vm.digitizeSelected(scope) }
+                        .tap(di) { vm.digitizeSelected() }
                         .padding(horizontal = 14.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Icon(Icons.Filled.AutoAwesome, null, tint = Color.White, modifier = Modifier.size(14.dp))
-                    Text("Digitize", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Icon(Icons.Filled.AutoAwesome, null, tint = PaperColors.Canvas, modifier = Modifier.size(14.dp))
+                    Text("Digitize", color = PaperColors.Canvas, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
                 val xdi = remember { MutableInteractionSource() }
                 Row(
@@ -353,8 +364,8 @@ fun LibraryScreen(
         }
     }
 
-    // ---------- scan FAB ----------
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomEnd) {
+    // ---------- scan FAB (hidden while multi-selecting) ----------
+    if (selected.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomEnd) {
         val fi = remember { MutableInteractionSource() }
         Box(
             modifier = Modifier
@@ -366,7 +377,7 @@ fun LibraryScreen(
                 .tap(fi, onScanNew),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Filled.Add, "Scan", tint = Color.White, modifier = Modifier.size(26.dp))
+            Icon(Icons.Filled.Add, "Scan", tint = PaperColors.Canvas, modifier = Modifier.size(26.dp))
         }
     }
 
@@ -374,6 +385,34 @@ fun LibraryScreen(
     if (showCreateFolder) {
         NameDialog("New folder", "Folder name", onDismiss = { showCreateFolder = false }) {
             vm.createFolder(it) { showCreateFolder = false }
+        }
+    }
+
+    manageFolder?.let { name ->
+        var renaming by remember(name) { mutableStateOf(false) }
+        when {
+            renaming -> NameDialog("Rename folder", "Folder name", initial = name,
+                onDismiss = { renaming = false; manageFolder = null }) {
+                vm.renameFolder(name, it); renaming = false; manageFolder = null
+            }
+            else -> AlertDialog(
+                onDismissRequest = { manageFolder = null },
+                containerColor = PaperColors.Tile,
+                title = { Text(name) },
+                text = { Text("${folders.find { it.name == name }?.docCount ?: 0} documents") },
+                confirmButton = {
+                    if (name != com.papercut.app.core.data.DocumentRepository.DEFAULT_FOLDER)
+                        TextButton(onClick = { renaming = true }) { Text("Rename") }
+                    else TextButton(onClick = { manageFolder = null }) { Text("Close") }
+                },
+                dismissButton = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { vm.deleteFolder(name); manageFolder = null }) {
+                            Text("Delete", color = PaperColors.Error)
+                        }
+                    }
+                },
+            )
         }
     }
 
@@ -431,7 +470,15 @@ private fun LaunchedEffectRefresh(vm: LibraryViewModel, scope: String?) {
 }
 
 @Composable
-private fun FolderChip(label: String, count: Int, selected: Boolean, onClick: () -> Unit) {
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun FolderChip(
+    label: String,
+    count: Int,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit,
+) {
     val inter = remember { MutableInteractionSource() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -442,7 +489,8 @@ private fun FolderChip(label: String, count: Int, selected: Boolean, onClick: ()
                 RoundedCornerShape(PaperRadii.pill))
             .border(1.dp, if (selected) PaperColors.Accent.copy(alpha = 0.6f) else PaperColors.TileBorder,
                 RoundedCornerShape(PaperRadii.pill))
-            .tap(inter, onClick)
+            .combinedClickable(interactionSource = inter, indication = null,
+                onClick = onClick, onLongClick = onLongPress)
             .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
         Text(label, fontSize = 13.sp,
@@ -487,20 +535,23 @@ private fun DocTile(
             modifier = Modifier.fillMaxSize().padding(10.dp),
             contentAlignment = Alignment.Center,
         ) {
-            if (doc.coverUri != null) {
-                AsyncImage(
-                    model = doc.coverUri,
-                    contentDescription = doc.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(14.dp)),
-                )
-            } else {
+            val letter = {
                 Text(
                     doc.name.take(1).uppercase(),
                     fontSize = 34.sp, fontWeight = FontWeight.Bold,
                     color = PaperColors.InkFaint,
                 )
             }
+            if (doc.coverUri != null) {
+                SubcomposeAsyncImage(
+                    model = doc.coverUri,
+                    contentDescription = doc.name,
+                    contentScale = ContentScale.Crop,
+                    loading = { letter() },
+                    error = { letter() },
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(14.dp)),
+                )
+            } else letter()
         }
 
         // bottom label strip
@@ -533,7 +584,7 @@ private fun DocTile(
                     .background(PaperColors.Accent, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                Icon(Icons.Filled.Check, null, tint = PaperColors.Canvas, modifier = Modifier.size(15.dp))
             }
         } else {
             // manage button (rename/delete) — long-press is reserved for selection
